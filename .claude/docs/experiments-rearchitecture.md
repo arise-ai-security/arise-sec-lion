@@ -13,7 +13,7 @@ to interpret the active treatments.
 |---|---|---|
 | N1 | one flat OpenHands session | naive baseline |
 | B4 | `b4-adaptive-v1`: BOSS -> four phase controllers -> compact role workers; targeted specialists added only after phase failure | adaptive hierarchical treatment |
-| B3 | `b4-adaptive-rolefused-v1`: BOSS -> four fused phase workers; no phase managers or role children | composite manager-plus-specialization ablation |
+| B3 | `b4-adaptive-rolefused-v1`: BOSS -> four fused LLM phase workers plus four host procedures; no phase managers or role children | composite manager-plus-specialization ablation |
 
 B3 is not a pure manager ablation. It simultaneously removes phase managers and fuses
 specialist roles, changing prompt scope, context allocation, and model-token allocation.
@@ -29,7 +29,7 @@ The current fixed compact route is deterministic host policy, not an LLM manager
 
 ```text
 BOSS
-  -> Builder manager  -> Build-Executor -> Build-Verifier
+  -> Builder manager  -> Build-Setup -> Build-Executor -> Build-Verifier
   -> Exploiter manager -> Repro-Creator -> Exploit-Validator
   -> Fixer manager -> Root-Cause-Analyst -> Patch-Applier -> Patch-Validator
   -> Reporter manager -> Reporter
@@ -99,7 +99,8 @@ All four terms are fail-closed and use the same frozen evaluator across arms.
 - Run the exploit three independent times. Require 3/3 agreement with the frozen CVE
   oracle on sanitizer class, access kind, top frame/function, signal, exit class, and
   timeout status.
-- Apply the model patch, rebuild, and replay the same PoC three times. Any timeout,
+- Apply the model patch, rebuild, and run the frozen post-patch evaluator three times.
+  Any timeout,
   signal, assertion, sanitizer finding, disallowed nonzero exit, or crash fails.
 - Run the declared regression suite separately. A fixed PoC does not imply regression
   safety.
@@ -108,9 +109,11 @@ All four terms are fail-closed and use the same frozen evaluator across arms.
 
 #### Safety and provenance
 
-- Protect benchmark scripts, PoC identity, evaluator inputs, and oracle data from patch
+- Protect benchmark scripts, submitted PoC artifacts, evaluator inputs, and oracle data from patch
   modification.
-- Bind pre-patch and post-patch replay to the same PoC and frozen base.
+- Bind both replay trios to the requested CVE instance and same frozen base commit. The
+  upstream PoC and patch evaluators use different artifact transports, so do not claim
+  byte-identical PoC execution without additional adapter evidence.
 - Reject path escape, protected-path edits, stale workspaces, missing command evidence,
   and PatchPlan/rendered-diff divergence.
 - Retain the cost of failed, timed-out, or incomplete runs. Missing usage is `missing`,
@@ -193,8 +196,8 @@ Landed (verify against tests, not this list alone):
 
 1. Per-role `worker.model_overrides` wired through config/bootstrap/OpenHands.
 2. Zero-human heterogeneous panel: `claude-opus-4-8`, `gpt-5.5-2026-04-23`,
-   `gemini/gemini-3.5-flash`; all seats valid, then deterministic 2-of-3; human audit
-   queue removed.
+   `gemini/gemini-3.5-flash`; the evaluator requires three valid seats, then applies
+   deterministic 2-of-3; the human audit queue is removed.
 3. Six independent fresh replays (PoC×3, patch×3) with exact crash-signature oracle.
 4. Confirmatory exact pairing rejects missing/duplicate/unequal arms.
 5. Runnable `b4-confirmatory-cohort` + role-fused `b3-rolefused` studies exist.
@@ -217,12 +220,13 @@ Landed since the prior blockers list (verify against tests):
 
 - `fresh_base` derived from six distinct container identities (not asserted).
 - `ReferenceReplayResult` carries `replay_id`, `container_id`, `image_digest`,
-  `base_commit`.
+  `instance_id`, and `base_commit`; independently derived replay-target identity fails
+  closed on missing or mismatched instance/base provenance.
 - Crash-signature oracle: SEGV `unknown` access; symbol-less `module+offset` frames;
   19-fixture preflight has zero incomplete signatures.
 - Regression executes only inside a fresh patched SEC-bench container (host argv
   execution removed as a P0 defect).
-- Final verification after the 19-plan freeze: 1,488 passed / 13 skipped, Pyright 0,
+- Final verification after the adaptive/role-fused repair: 1,494 passed / 13 skipped, Pyright 0,
   manifests and architecture checks pass, diff check clean, DOCX re-rendered to 20 pages.
 
 Do not start confirmatory experiments until every release-gate row passes.

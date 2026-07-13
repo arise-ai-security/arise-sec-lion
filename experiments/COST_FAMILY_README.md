@@ -10,8 +10,8 @@ coordination cost comes from. The family hypothesis is a **normalized-cost order
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `n1-openhands-linear` | N1 | flat (1 agent) | — | — | OpenHands · gpt-5.3-codex | off | n/a (flat) |
 | `n2-openhands-subagents` | N2 | flat + native subagents | — | — | OpenHands · gpt-5.3-codex | **on** | n/a (flat) |
-| `b3-boss-bef-direct` | B3 | Boss → BEF workers (`max_depth=1`) | sonnet-4-6 | (none spawn) | OpenHands · gpt-5.4-mini | — | **off** |
-| `b4-boss-manager-worker` | B4 | Boss → BEF managers → workers (`max_depth=2`) | sonnet-4-6 | sonnet-4-6 | OpenHands · gpt-5.4-mini | — | **off** |
+| `b3-rolefused` | B3 | Boss → 4 fused LLM phases + 4 host procedures | gpt-5.4 | (none spawn) | mini for Builder; Codex for reasoning phases | — | **off** |
+| `b4-boss-manager-worker` | B4 | Boss → 4 phase controllers → adaptive role workers | gpt-5.4 | gpt-5.4 | mini coding; Codex reasoning; 4 host procedures | — | **off** |
 
 Design decisions baked into the configs:
 
@@ -27,8 +27,10 @@ Design decisions baked into the configs:
 - **Identical tools except subagent spawning.** Every cell's worker gets
   `allowed_tools: [file_editor, glob, grep]` + MCP `[shell_in_container, valgrind_run, klee_run]`.
   The only tool delta is N2's delegation tool.
-- **B3/B4 judge OFF** (`orchestration.skip_judge: true`).
-- **Boss = sonnet-4-6 in B3 and B4** (the plan's "change opus-4.8 → sonnet 4.6 for the boss").
+- **B3/B4 orchestration judge OFF** (`orchestration.skip_judge: true`). The independent
+  three-seat semantic evaluator remains part of authoritative experiment success.
+- **Boss and B4 managers = `gpt-5.4`**. Coding workers use `gpt-5.4-mini`; reasoning,
+  hybrid, and synthesis workers use `gpt-5.3-codex`; four frozen roles are host procedures.
 - **B4 events flow to the DB** exactly as the B-cells do; N1/N2 emit `RunStarted` /
   `AgentCreated` / `WorkerCostRecorded` / `RunCompleted` to Postgres through the same pipeline,
   so all analysis grounds on DB events only.
@@ -65,7 +67,7 @@ Use the `study-sql` skill / `experiments.shared.scripts.study_sql`:
 
 ```bash
 set -a; source deployment/.env; set +a; export POSTGRES_HOST=localhost
-ALL=n1-openhands-linear,n2-openhands-subagents,b3-boss-bef-direct,b4-boss-manager-worker
+ALL=n1-openhands-linear,n2-openhands-subagents,b3-rolefused,b4-boss-manager-worker
 uv run python -m experiments.shared.scripts.study_sql cost  --studies $ALL   # raw + normalized USD
 uv run python -m experiments.shared.scripts.study_sql cache --studies $ALL   # hit rate by role/depth
 uv run python -m experiments.shared.scripts.study_sql tools --studies $ALL   # tool calls by level

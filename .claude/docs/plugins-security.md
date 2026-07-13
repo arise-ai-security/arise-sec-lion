@@ -106,11 +106,10 @@ describes **what kind of work it is**.
 | Execution mechanism | `LLM`, `host procedure` | Whether a model conversation runs or trusted Arise Python executes a fixed procedure |
 | Task character | `coding/execution`, `reasoning`, `hybrid`, `synthesis` | The cognitive shape of the task; `thinking` is not a separate category from reasoning |
 
-The target pre-experiment model policy is role-based and is **not implemented yet**.
-Every role classified as reasoning, hybrid, or synthesis uses `gpt-5.3-codex`; pure
-coding/execution roles use `gpt-5.4-mini`; host procedures use no model. This requires a
-generic `worker.model_overrides` configuration path. The current worker configuration
-has only `reasoning_effort_overrides`.
+The implemented pre-experiment model policy is role-based. Every role classified as
+reasoning, hybrid, or synthesis uses `gpt-5.3-codex`; pure coding/execution roles use
+`gpt-5.4-mini`; host procedures use no model. Generic `worker.model_overrides` routes
+the LLM-backed roles and persists the selected model in worker cost events.
 
 | Phase | Catalog role | Current mechanism | Task character | Target model |
 |---|---|---|---|---|
@@ -143,21 +142,19 @@ adaptive policy when `adaptive_execution` is enabled:
 
 ```text
 BOSS
-  -> Builder -> Build-Executor, Build-Verifier
+  -> Builder -> Build-Setup, Build-Executor, Build-Verifier
   -> Exploiter -> Repro-Creator, Exploit-Validator
   -> Fixer -> Root-Cause-Analyst, Patch-Applier, Patch-Validator
   -> Reporter -> Reporter
 ```
 
-That compact route is eight leaf workers, four of which are host procedures. It is
+That compact route is nine leaf workers, four of which are host procedures. It is
 selected by trusted host code, not by an LLM manager. A failed phase re-decomposition
 adds only specialists whose trigger matches the failure; an unrecognized failure uses
-the phase's full escalated set. `b4-adaptive-rolefused-v1` marks the four root phases
-simple and stops decomposition at the phase worker.
-
-The prompt files are not yet aligned with that policy: `prompts/domains/secbench/assess.j2`
-still requires separate required-role leaves and rejects merged roles. Do not begin a
-confirmatory experiment until prompt and fixed-policy behavior agree.
+the phase's full escalated set. Hard dependencies are closed transitively, so an adaptive
+route cannot select a consumer without its producer. `b4-adaptive-rolefused-v1` creates
+four fused LLM phase workers plus the same four host procedures, with no role children.
+The assess and worker prompts describe these two treatment shapes explicitly.
 
 ## Deterministic Procedure Tier (procedural dispatch)
 
@@ -187,7 +184,7 @@ When `settings.orchestration.procedural_dispatch` is on, `SecBenchProcedureExecu
 | Patch plan | JSON schema, allowed operations, paths, context anchors, and frozen scope all validate | malformed plan, path escape/protected path, missing/ambiguous anchor, unsupported operation |
 | Patch apply | host renders the approved plan into a unified diff without discretionary edits | any mismatch between approved plan and rendered patch |
 | Patch validation | patch applies, build succeeds, and all three post-patch replays are crash-free | patch/build timeout or nonzero exit, signal, assertion, sanitizer, or any replay crash |
-| Safety/provenance | protected artifacts unchanged; exploit identity and fresh-base replay preserved | identity drift, protected-path modification, stale workspace, missing host evidence |
+| Safety/provenance | protected artifacts unchanged; all six containers are distinct; pre/post replay trios target the requested CVE and same frozen base | target/base identity drift, protected-path modification, reused container, missing host evidence |
 
 Mechanical gates never accept an agent-authored `VERDICT: PASS`. A failed procedure
 records a bounded `failure_digest` and gets exactly one agentic retry; the retry does

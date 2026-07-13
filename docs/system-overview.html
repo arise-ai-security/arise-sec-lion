@@ -287,16 +287,19 @@
           <rect class="d-card fill-green" x="480" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="525" y="203" text-anchor="middle">Exploiter</text>
           <rect class="d-card fill-green" x="575" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="620" y="203" text-anchor="middle">Fixer</text>
           <rect class="d-card fill-green" x="670" y="178" width="90" height="42" rx="6"/><text class="d-sub xs" x="715" y="203" text-anchor="middle">Reporter</text>
-          <text class="d-cap" x="540" y="252" text-anchor="middle">four fused phase workers · no role children</text>
-          <text class="d-cap" x="540" y="270" text-anchor="middle">composite ablation, not manager-only</text>
+          <rect class="d-card blue" x="385" y="232" width="375" height="48" rx="6"/>
+          <text class="d-title xs" x="572" y="252" text-anchor="middle">4 direct host procedures</text>
+          <text class="d-sub xs" x="572" y="270" text-anchor="middle">build verify · exploit verify · patch apply · patch verify</text>
+          <text class="d-cap" x="540" y="304" text-anchor="middle">four fused LLM phases + four procedures · no role children</text>
+          <text class="d-cap" x="540" y="322" text-anchor="middle">composite ablation, not manager-only</text>
 
           <rect class="d-card ink" x="835" y="54" width="130" height="42" rx="6"/><text class="d-title xs" x="900" y="80" text-anchor="middle">BOSS</text>
           <path class="d-edge" d="M900,96 V126" marker-end="url(#m-a)"/>
           <rect class="d-card amber" x="805" y="128" width="190" height="44" rx="6"/><text class="d-title xs" x="900" y="155" text-anchor="middle">4 phase controllers</text>
           <path class="d-edge" d="M900,172 V202" marker-end="url(#m-a)"/>
           <rect class="d-card fill-green" x="805" y="204" width="190" height="52" rx="6"/>
-          <text class="d-title xs" x="900" y="226" text-anchor="middle">8 compact workers</text>
-          <text class="d-sub xs" x="900" y="244" text-anchor="middle">4 LLM + 4 procedures</text>
+          <text class="d-title xs" x="900" y="226" text-anchor="middle">9 compact workers</text>
+          <text class="d-sub xs" x="900" y="244" text-anchor="middle">5 LLM + 4 procedures</text>
           <path class="d-edge red dashed" d="M995,230 H1032 V150 H997" marker-end="url(#m-a)"/>
           <text class="d-cap" x="900" y="286" text-anchor="middle">phase failure → targeted specialists only</text>
         </svg>
@@ -309,7 +312,7 @@
       <tbody>
         <tr><td class="cell">N1</td><td>one flat OpenHands session</td><td>confirmatory baseline</td><td>naive single-agent performance</td></tr>
         <tr><td class="cell">B4</td><td>BOSS → phase controllers → adaptive role workers</td><td>confirmatory treatment</td><td>adaptive hierarchical system</td></tr>
-        <tr><td class="cell">B3</td><td>BOSS → four fused phase workers</td><td>development ablation</td><td>manager removal plus role fusion</td></tr>
+        <tr><td class="cell">B3</td><td>BOSS → four fused LLM phases + four host procedures</td><td>development ablation</td><td>manager removal plus role fusion</td></tr>
       </tbody>
     </table>
   </section>
@@ -440,7 +443,7 @@
         <svg viewBox="0 0 1080 430" role="img" aria-label="Adaptive B4 compact and escalated routes">
           <defs><marker id="t-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
           <text class="d-role amber" x="60" y="34">phase order</text>
-          <rect class="d-card amber" x="60" y="58" width="190" height="54" rx="6"/><text class="d-title xs" x="155" y="81" text-anchor="middle">Builder controller</text><text class="d-sub xs" x="155" y="99" text-anchor="middle">Executor → Verifier</text>
+          <rect class="d-card amber" x="60" y="58" width="190" height="54" rx="6"/><text class="d-title xs" x="155" y="81" text-anchor="middle">Builder controller</text><text class="d-sub xs" x="155" y="99" text-anchor="middle">Setup → Executor → Verifier</text>
           <path class="d-edge" d="M250,85 H310" marker-end="url(#t-a)"/>
           <rect class="d-card amber" x="312" y="58" width="210" height="54" rx="6"/><text class="d-title xs" x="417" y="81" text-anchor="middle">Exploiter controller</text><text class="d-sub xs" x="417" y="99" text-anchor="middle">Repro → Validator</text>
           <path class="d-edge" d="M522,85 H582" marker-end="url(#t-a)"/>
@@ -448,20 +451,20 @@
           <path class="d-edge" d="M814,85 H874" marker-end="url(#t-a)"/>
           <rect class="d-card amber" x="876" y="58" width="150" height="54" rx="6"/><text class="d-title xs" x="951" y="81" text-anchor="middle">Reporter</text><text class="d-sub xs" x="951" y="99" text-anchor="middle">synthesis</text>
 
-          <text class="d-role green" x="60" y="166">compact route · 8 leaves</text>
+          <text class="d-role green" x="60" y="166">compact route · 9 leaves</text>
           <rect class="d-card fill-green" x="60" y="190" width="966" height="58" rx="6"/>
-          <text class="d-anno" x="84" y="216">Build-Executor · Build-Verifier · Repro-Creator · Exploit-Validator</text>
+          <text class="d-anno" x="84" y="216">Build-Setup · Build-Executor · Build-Verifier · Repro-Creator · Exploit-Validator</text>
           <text class="d-anno" x="84" y="236">Root-Cause-Analyst · Patch-Applier · Patch-Validator · Reporter</text>
           <path class="d-edge red dashed" d="M543,248 V292" marker-end="url(#t-a)"/>
           <text class="d-anno sm red" x="562" y="276">phase gate failed + failure digest</text>
 
           <text class="d-role red" x="60" y="324">targeted escalation</text>
           <rect class="d-card fill-red" x="60" y="346" width="966" height="58" rx="6"/>
-          <text class="d-anno" x="84" y="372">build failure → Build-Setup · sanitizer/PoC failure → PoC-Researcher + PoC-Tester</text>
-          <text class="d-anno" x="84" y="392">data-flow failure → Data-Flow-Analyst + Forward-Instrumentator · patch risk → Candidate/Regression</text>
+          <text class="d-anno" x="84" y="372">build failure → rerun dependency-closed Builder route · sanitizer/PoC → Researcher + Tester</text>
+          <text class="d-anno" x="84" y="392">data-flow → Researcher + Analyst + Instrumentator · patch risk → Candidate/Regression</text>
         </svg>
       </div>
-      <figcaption><b>Fig 5.</b> Successful compact artifacts are reused. Escalation stays inside the failed phase. If no trigger matches, the controller uses that phase's full specialist set. Current prompts that force all roles or prohibit fusion must be changed before experiments.</figcaption>
+      <figcaption><b>Fig 5.</b> Successful compact artifacts are reused. Escalation stays inside the failed phase. Hard dependencies are added transitively, and an unknown failure selects that phase's full specialist set. The prompts implement this adaptive route and the separate role-fused treatment.</figcaption>
     </figure>
   </section>
 
@@ -469,7 +472,7 @@
   <section id="roles">
     <div class="kick" data-reveal><b>06</b> / Worker architecture</div>
     <h2 data-reveal>Execution mechanism and work type are separate</h2>
-    <p class="intro" data-reveal><strong>Mechanical vs LLM</strong> describes execution. <strong>Coding, reasoning, hybrid, and synthesis</strong> describe the work. “Thinking” adds no distinct category. The model map below is the pre-experiment target; per-role model overrides are not implemented yet.</p>
+    <p class="intro" data-reveal><strong>Mechanical vs LLM</strong> describes execution. <strong>Coding, reasoning, hybrid, and synthesis</strong> describe the work. “Thinking” adds no distinct category. The implemented <code>worker.model_overrides</code> map routes every reasoning, hybrid, and synthesis role to GPT-5.3 Codex.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 300" role="img" aria-label="Mechanical versus LLM worker routing">
@@ -715,7 +718,7 @@
           <path class="d-edge" d="M260,85 H310" marker-end="url(#e-a)"/>
           <rect class="d-card blue" x="312" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="417" y="78" text-anchor="middle">Fresh replay</text><text class="d-sub xs" x="417" y="98" text-anchor="middle">pre×3 · apply/build · post×3</text>
           <path class="d-edge" d="M522,85 H572" marker-end="url(#e-a)"/>
-          <rect class="d-card green" x="574" y="54" width="220" height="62" rx="6"/><text class="d-title xs" x="684" y="78" text-anchor="middle">Exact oracle + safety</text><text class="d-sub xs" x="684" y="98" text-anchor="middle">class · access · frame · identity</text>
+          <rect class="d-card green" x="574" y="54" width="220" height="62" rx="6"/><text class="d-title xs" x="684" y="78" text-anchor="middle">Exact oracle + safety</text><text class="d-sub xs" x="684" y="98" text-anchor="middle">class · access · frame · target/base</text>
           <path class="d-edge" d="M794,85 H844" marker-end="url(#e-a)"/>
           <rect class="d-card green" x="846" y="54" width="184" height="62" rx="6"/><text class="d-title xs" x="938" y="78" text-anchor="middle">Regression gate</text><text class="d-sub xs" x="938" y="98" text-anchor="middle">independent suite</text>
 
@@ -772,13 +775,14 @@
         <tr><td>Prompt-treatment agreement</td><td>adaptive + role-fused treatments declared; prompts aligned for B4 adaptive route</td><td>re-verify assess/worker templates against treatment version before launch</td></tr>
         <tr><td>Exact independent replay</td><td>PoC×3 + patch×3; exact crash oracle (class/access/frame); SEGV <code>unknown</code> + module-offset frames</td><td>live replay on all cohort images</td></tr>
         <tr><td>Fresh-base provenance</td><td><code>fresh_base</code> derived from six distinct container IDs; each replay stores <code>replay_id</code>, digest, base commit</td><td>none in code path</td></tr>
+        <tr><td>Replay target identity</td><td>each replay stores instance + base commit; both trios must independently resolve to the requested instance and same base</td><td>none in code path</td></tr>
         <tr><td>Host regression</td><td>19 project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound</td><td>none in code path</td></tr>
         <tr><td>Grounded judges</td><td>blinded packet includes frozen oracle + raw host replay + host regression</td><td>pilot bundle proves no arm/model fields leak</td></tr>
         <tr><td>Complete provenance</td><td>immutable evaluation bundle: replays, regression, semantic panel, hashes</td><td>pilot bundle inspection</td></tr>
         <tr><td>Strict pairing</td><td>confirmatory runner rejects missing/duplicate/unequal arms</td><td>none in code path</td></tr>
         <tr><td>Cost integrity</td><td>missing usage is unavailable, never imputed zero for ITT success</td><td>none in code path</td></tr>
         <tr><td>Untouched cohort</td><td><code>b4-confirmatory-cohort</code> + preregistration exist; 19 fixtures</td><td>freeze plans, digests, seed, and evaluator hashes after pilot</td></tr>
-        <tr><td>Verification</td><td>1,488 passed / 13 skipped; Pyright 0; manifests, architecture, diff check, 19/19 signature preflight, and 20-page DOCX render pass</td><td>development end-to-end pilot</td></tr>
+        <tr><td>Verification</td><td>1,494 passed / 13 skipped; Pyright 0; manifests, architecture, diff check, 19/19 signature preflight, and 20-page DOCX render pass</td><td>development end-to-end pilot</td></tr>
       </tbody>
     </table>
   </section>
