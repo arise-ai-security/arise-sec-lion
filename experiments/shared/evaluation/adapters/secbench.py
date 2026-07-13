@@ -227,6 +227,7 @@ class SecBenchEvaluatorAdapter:
             invocation_evidence=evidence,
             raw_reports=reports,
             replay_id=replay_id,
+            instance_id=instance_id,
             container_id=container_id,
             image_digest=self._image_digest(image),
             base_commit=self._base_commit,

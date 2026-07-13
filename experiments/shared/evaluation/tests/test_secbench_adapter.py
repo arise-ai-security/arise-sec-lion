@@ -111,6 +111,7 @@ def test_evaluator_adapter_uses_openhands_parser_and_captures_evidence(
     argv = result.invocation_evidence.argv
     assert argv[argv.index("--agent") + 1] == "oh"
     assert result.modes["primary"].verdict.passed
+    assert result.instance_id == "project.cve-0000-0000"
     assert result.container_id == "ctrdeadbeef01"
     assert result.image_digest == "sha256:imgdigest"
     assert result.base_commit == "abc123"
