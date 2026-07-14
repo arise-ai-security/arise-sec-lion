@@ -1084,7 +1084,7 @@ def _resolve_rebuild_output(session: ProcedureSession, container_path: str) -> P
         if not relative:
             continue
         candidate = root.joinpath(*relative)
-        if _safe_mounted_path(root, candidate.parent, require_directory=True):
+        if _safe_mounted_parent_chain(root, candidate.parent):
             return candidate
     return None
 
@@ -1268,6 +1268,27 @@ def _safe_mounted_path(root: Path, candidate: Path, *, require_directory: bool) 
     if resolved != root_resolved and root_resolved not in resolved.parents:
         return False
     return stat.S_ISDIR(mode) if require_directory else stat.S_ISREG(mode)
+
+
+def _safe_mounted_parent_chain(root: Path, parent: Path) -> bool:
+    try:
+        root.resolve(strict=True)
+        relative = parent.relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+    current = root
+    for part in relative.parts:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return False
+    return True
 
 
 def _validate_host_binary(path: Path | None) -> str | None:

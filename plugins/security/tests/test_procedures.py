@@ -2566,6 +2566,67 @@ async def test_patch_validation_recheck_cleans_untracked_git_build_inputs(
     assert not planted.exists()
 
 
+async def test_patch_validation_recheck_accepts_cleaned_in_tree_output_parent(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "src"
+    worktree = source_dir / "project"
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    target = worktree / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    _git(worktree, "add", "vulnerable.c")
+    _git(
+        worktree,
+        "-c",
+        "user.name=Procedure Tests",
+        "-c",
+        "user.email=procedure-tests@example.invalid",
+        "commit",
+        "-m",
+        "Seed fixture",
+    )
+    base_commit = _git(worktree, "rev-parse", "HEAD")
+    cve = _cve().model_copy(
+        update={"base_commit": base_commit, "work_dir": "/src/project"}
+    )
+    binary_path = "/src/project/frontend/.libs/app"
+    tc = tmp_path / "testcase"
+    identity = await _freeze_exploit_identity(
+        tc,
+        cve=cve,
+        source_dir=source_dir,
+        binary_path=binary_path,
+    )
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
+    (tc / "patch_plan.json").write_text(
+        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+    )
+    session = StatefulPatchSession(tc, binary_path=binary_path)
+    approval = await _executor(session).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", cve, {"root_id": uuid4()}
+    )
+    assert approval.success is True
+    root_id = uuid4()
+
+    first = await _executor(session).execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        cve,
+        {"root_id": root_id, "procedure_attempt": 1},
+    )
+    second = await _executor(session).execute(
+        "secb_patch_validation",
+        "[Patch-Validator] validate",
+        cve,
+        {"root_id": root_id, "procedure_attempt": 2},
+    )
+
+    assert first.success is False
+    assert second.success is True
+    assert _workspace_path(source_dir, session.work_dir, binary_path).exists()
+
+
 async def test_patch_validation_empty_diff_fails_without_running_secb(tmp_path: Path) -> None:
     # Given: an empty model_patch.diff
     tc = tmp_path / "testcase"
