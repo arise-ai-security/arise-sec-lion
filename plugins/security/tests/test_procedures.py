@@ -21,6 +21,7 @@ from plugins.security.cve_instance import CVEInstance
 from plugins.security.deliverables import EXPLOIT_VALIDATION_FIELDS, PATCH_VALIDATION_FIELDS
 from plugins.security.procedures import (
     CommandOutcome,
+    CommandTermination,
     ProcedureInfrastructureError,
     SecBenchProcedureExecutor,
 )
@@ -46,6 +47,13 @@ WRITE of size 8 at 0x1 thread T0
 
 _NO_CRASH = "running repro...\nall checks passed, no sanitizer error observed\n"
 _ASAN_HELP = "Available flags for AddressSanitizer:"
+_FAAD_BINARY = "/src/faad2/frontend/.libs/faad"
+_FAAD_LIBRARY_DIR = "/src/faad2/libfaad/.libs"
+_FAAD_LOADER_PATH = f"{_FAAD_LIBRARY_DIR}:/opt/runtime/lib"
+_FAAD_MISSING_LIBRARY = (
+    f"{_FAAD_BINARY}: error while loading shared libraries: libfaad.so.2: "
+    "cannot open shared object file: No such file or directory"
+)
 
 _REAL_REPRO = (
     "#!/bin/bash\n"
@@ -96,6 +104,9 @@ class FakeSession:
         self.invocations: list[
             tuple[tuple[str, ...], bytes | None, tuple[tuple[str, str], ...], float]
         ] = []
+        self.marker_invocations: list[
+            tuple[tuple[str, ...], str, tuple[tuple[str, str], ...], float]
+        ] = []
 
     async def run(
         self,
@@ -116,6 +127,27 @@ class FakeSession:
                 return resp.outcome
         return self._default
 
+    async def run_until_marker(
+        self,
+        argv: tuple[str, ...],
+        *,
+        marker: str,
+        timeout: float,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome:
+        self.marker_invocations.append((argv, marker, env, timeout))
+        outcome = await self.run(argv, timeout=timeout, env=env)
+        if (
+            marker in outcome.output
+            and outcome.termination is CommandTermination.COMPLETED
+        ):
+            return CommandOutcome(
+                exit_code=outcome.exit_code,
+                output=outcome.output,
+                termination=CommandTermination.STOPPED_AFTER_MARKER,
+            )
+        return outcome
+
 
 class StatefulPatchSession(FakeSession):
     """Patch session that mutates the shared source and binary like the real runtime."""
@@ -126,6 +158,7 @@ class StatefulPatchSession(FakeSession):
         *,
         original_source: bytes = b"void parse(void) { unsafe(); }\n",
         patched_source: bytes = b"void parse(void) { safe(); }\n",
+        binary_path: str = "/work/bin/app",
     ) -> None:
         super().__init__(
             testcase_dir,
@@ -134,14 +167,15 @@ class StatefulPatchSession(FakeSession):
                 _Resp("secb patch", _clean("applied")),
                 _Resp("secb build", _crash("compile failed after replacing the binary")),
                 _Resp("secb build", _clean("rebuilt")),
-                *_binary_validation(),
-                *_direct_replay(_clean(_NO_CRASH), times=3),
+                *_binary_validation(binary_path),
+                *_direct_replay(_clean(_NO_CRASH), times=3, binary_path=binary_path),
             ],
         )
         self.patch_calls = 0
         self.build_calls = 0
         self.original_source = original_source
         self.patched_source = patched_source
+        self.binary_path = binary_path
         self.prepatch_observations: list[bytes] = []
 
     async def run(
@@ -161,7 +195,7 @@ class StatefulPatchSession(FakeSession):
             self.patch_calls += 1
         elif argv == ("/usr/local/bin/secb", "build"):
             self.build_calls += 1
-            binary = self.work_dir / "bin" / "app"
+            binary = _workspace_path(self.source_dir, self.work_dir, self.binary_path)
             if self.build_calls == 1:
                 binary.unlink(missing_ok=True)
             else:
@@ -201,26 +235,39 @@ def _clean(output: str) -> CommandOutcome:
     return CommandOutcome(exit_code=0, output=output)
 
 
-def _repro(outcome: CommandOutcome, times: int = 3) -> list[_Resp]:
+def _repro(
+    outcome: CommandOutcome,
+    times: int = 3,
+    *,
+    binary_path: str = "/work/bin/app",
+) -> list[_Resp]:
     return [
-        _Resp("ASAN_OPTIONS=help=1 /work/bin/app", _clean(_ASAN_HELP)),
+        _Resp(f"ASAN_OPTIONS=help=1 {binary_path}", _clean(_ASAN_HELP)),
         *[
-            _Resp("ASAN_OPTIONS=abort_on_error=1:halt_on_error=1 /work/bin/app", outcome)
+            _Resp(
+                f"ASAN_OPTIONS=abort_on_error=1:halt_on_error=1 {binary_path}",
+                outcome,
+            )
             for _ in range(times)
         ],
     ]
 
 
-def _direct_replay(outcome: CommandOutcome, times: int = 1) -> list[_Resp]:
+def _direct_replay(
+    outcome: CommandOutcome,
+    times: int = 1,
+    *,
+    binary_path: str = "/work/bin/app",
+) -> list[_Resp]:
     return [
-        _Resp("ASAN_OPTIONS=abort_on_error=1:halt_on_error=1 /work/bin/app", outcome)
+        _Resp(f"ASAN_OPTIONS=abort_on_error=1:halt_on_error=1 {binary_path}", outcome)
         for _ in range(times)
     ]
 
 
-def _binary_validation() -> list[_Resp]:
+def _binary_validation(binary_path: str = "/work/bin/app") -> list[_Resp]:
     return [
-        _Resp("ASAN_OPTIONS=help=1 /work/bin/app", _clean(_ASAN_HELP)),
+        _Resp(f"ASAN_OPTIONS=help=1 {binary_path}", _clean(_ASAN_HELP)),
     ]
 
 
@@ -228,6 +275,15 @@ def _seed_elf(path: Path, *, payload: bytes = b"fixture") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\x7fELF" + payload)
     path.chmod(0o755)
+
+
+def _workspace_path(source_dir: Path, work_dir: Path, container_path: str) -> Path:
+    path = Path(container_path)
+    if path.parts[:2] == ("/", "src"):
+        return source_dir.joinpath(*path.parts[2:])
+    if path.parts[:2] == ("/", "work"):
+        return work_dir.joinpath(*path.parts[2:])
+    raise ValueError(f"unsupported test workspace path: {container_path}")
 
 
 def _git(worktree: Path, *arguments: str) -> str:
@@ -245,10 +301,13 @@ def _git(worktree: Path, *arguments: str) -> str:
 def _seed_builder_baseline(
     tc: Path,
     *,
-    source_dir: Path,
-    work_dir: Path,
-    cve: CVEInstance,
+    source_dir: Path | None = None,
+    work_dir: Path | None = None,
+    cve: CVEInstance | None = None,
 ) -> None:
+    source_dir = source_dir or tc.parent / "src"
+    work_dir = work_dir or tc.parent / "work"
+    cve = cve or _cve()
     source_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     (tc / "base_commit_hash").write_text(cve.base_commit + "\n", encoding="utf-8")
@@ -263,6 +322,7 @@ def _seed_exploit_inputs(
     source_dir: Path | None = None,
     work_dir: Path | None = None,
     cve: CVEInstance | None = None,
+    binary_path: str = "/work/bin/app",
 ) -> None:
     cve = cve or _cve()
     source_dir = source_dir or tc.parent / "src"
@@ -271,9 +331,87 @@ def _seed_exploit_inputs(
     (tc / "repro.sh").write_text(repro)
     (tc / "poc_path.txt").write_text("/testcase/poc.bin\n")
     (tc / "poc.bin").write_bytes(b"proof")
-    (tc / "binary_paths.txt").write_text("/work/bin/app\n")
-    _seed_elf(work_dir / "bin" / "app")
+    (tc / "binary_paths.txt").write_text(binary_path + "\n")
+    _seed_elf(_workspace_path(source_dir, work_dir, binary_path))
     _seed_builder_baseline(tc, source_dir=source_dir, work_dir=work_dir, cve=cve)
+
+
+def _seed_faad_exploit_inputs(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, CVEInstance]:
+    source_dir = tmp_path / "src"
+    worktree = source_dir / "faad2"
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    source = worktree / "decoder.c"
+    source.write_text("int decode(void) { return 0; }\n", encoding="utf-8")
+    target = worktree / "vulnerable.c"
+    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    _git(worktree, "add", "decoder.c", "vulnerable.c")
+    _git(
+        worktree,
+        "-c",
+        "user.name=Procedure Tests",
+        "-c",
+        "user.email=procedure-tests@example.invalid",
+        "commit",
+        "-m",
+        "Seed fixture",
+    )
+    cve = _cve().model_copy(
+        update={
+            "base_commit": _git(worktree, "rev-parse", "HEAD"),
+            "work_dir": "/src/faad2",
+        }
+    )
+    tc = tmp_path / "testcase"
+    _seed_exploit_inputs(
+        tc,
+        source_dir=source_dir,
+        cve=cve,
+        binary_path=_FAAD_BINARY,
+    )
+    return tc, source_dir, worktree, cve
+
+
+def _seed_faad_library(directory: Path) -> None:
+    target = directory / "libfaad.so.2.0.0"
+    _seed_elf(target)
+    (directory / "libfaad.so.2").symlink_to(target.name)
+
+
+async def _freeze_faad_identity(
+    tc: Path,
+    source_dir: Path,
+    cve: CVEInstance,
+) -> str:
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp(
+                f"ASAN_OPTIONS=help=1 {_FAAD_BINARY}",
+                CommandOutcome(exit_code=127, output=_FAAD_MISSING_LIBRARY),
+            ),
+            _Resp("/usr/bin/printenv LD_LIBRARY_PATH", _clean("/opt/runtime/lib\n")),
+            _Resp(
+                f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                _clean(_ASAN_HELP),
+            ),
+            *[
+                _Resp(
+                    f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                    _crash(_ASAN_HEAP),
+                )
+                for _ in range(3)
+            ],
+        ],
+    )
+    result = await _executor(session).execute(
+        "secb_exploit_validation", "[Exploit-Validator] validate", cve, {"root_id": uuid4()}
+    )
+    assert result.success is True
+    return (tc / "exploit_input_identity.txt").read_text(encoding="utf-8").strip()
 
 
 def _verdict_keys(path: Path) -> list[str]:
@@ -306,6 +444,12 @@ async def test_build_validation_passes_for_executable_elf_with_sanitizer_runtime
     tc.mkdir()
     (tc / "binary_paths.txt").write_text("/work/target\n")
     _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(
+        tc,
+        source_dir=tmp_path / "src",
+        work_dir=tmp_path / "work",
+        cve=_cve(),
+    )
     session = FakeSession(
         tc,
         responses=[
@@ -323,9 +467,11 @@ async def test_build_validation_passes_for_executable_elf_with_sanitizer_runtime
     # Then: every part of the host-owned binary contract is evidenced
     assert result.success is True
     assert any(command.endswith("secb build") for command in session.commands)
-    assert result.evidence[1].argv == ("host-elf-check", "/work/target")
+    assert result.evidence[1].argv == ("host-builder-baseline-check", "/work")
+    assert result.evidence[2].argv == ("host-elf-check", "/work/target")
     assert any("ASAN_OPTIONS=help=1 /work/target" in command for command in session.commands)
-    assert len(result.evidence) == 3
+    assert result.evidence[-1].argv == ("host-builder-baseline-recheck", "/work")
+    assert len(result.evidence) == 6
 
 
 async def test_build_validation_fails_when_build_fails(tmp_path: Path) -> None:
@@ -357,6 +503,7 @@ async def test_build_validation_fails_when_binary_pointer_missing(tmp_path: Path
     # Given: secb build succeeds but no binary pointer was declared
     tc = tmp_path / "testcase"
     tc.mkdir()
+    _seed_builder_baseline(tc)
     session = FakeSession(tc)  # build ok, but binary_paths.txt absent
     ex = _executor(session)
 
@@ -374,6 +521,7 @@ async def test_build_validation_rejects_testcase_binary_snapshot(tmp_path: Path)
     tc.mkdir()
     (tc / "binary_paths.txt").write_text("/testcase/bin/app\n", encoding="utf-8")
     _seed_elf(tc / "bin" / "app")
+    _seed_builder_baseline(tc)
     session = FakeSession(
         tc,
         responses=[_Resp("secb build", _clean("built"))],
@@ -398,6 +546,7 @@ async def test_build_validation_rejects_non_elf_nonempty_target(tmp_path: Path) 
     target.parent.mkdir(parents=True)
     target.write_text("not an ELF file", encoding="utf-8")
     target.chmod(0o755)
+    _seed_builder_baseline(tc)
     session = FakeSession(
         tc,
         responses=[
@@ -423,6 +572,7 @@ async def test_build_validation_rejects_symlinked_binary(tmp_path: Path) -> None
     linked = tmp_path / "work" / "target"
     linked.parent.mkdir(parents=True)
     linked.symlink_to(outside)
+    _seed_builder_baseline(tc)
     session = FakeSession(tc, responses=[_Resp("secb build", _clean("built"))])
 
     result = await _executor(session).execute(
@@ -430,7 +580,7 @@ async def test_build_validation_rejects_symlinked_binary(tmp_path: Path) -> None
     )
 
     assert result.success is False
-    assert "not a non-empty executable ELF" in result.summary
+    assert "does not resolve inside the run workspace" in result.summary
     assert result.evidence[-1].argv == ("host-elf-check", "/work/target")
     assert not any("ASAN_OPTIONS" in command for command in session.commands)
 
@@ -440,6 +590,7 @@ async def test_build_validation_rejects_missing_sanitizer_runtime(tmp_path: Path
     tc.mkdir()
     (tc / "binary_paths.txt").write_text("/work/target\n")
     _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
     session = FakeSession(
         tc,
         responses=[
@@ -462,6 +613,10 @@ async def test_build_validation_rejects_missing_sanitizer_runtime(tmp_path: Path
     assert "did not initialize the address sanitizer runtime" in result.summary
     assert result.digest is not None
     assert "libclang_rt.asan.so" in result.digest
+    assert not any(
+        invocation[0] == ("/usr/bin/printenv", "LD_LIBRARY_PATH")
+        for invocation in session.invocations
+    )
 
 
 async def test_build_validation_checks_every_declared_binary(tmp_path: Path) -> None:
@@ -472,6 +627,7 @@ async def test_build_validation_checks_every_declared_binary(tmp_path: Path) -> 
     second = tmp_path / "work" / "second"
     second.write_text("not ELF", encoding="utf-8")
     second.chmod(0o755)
+    _seed_builder_baseline(tc)
     session = FakeSession(
         tc,
         responses=[
@@ -486,7 +642,7 @@ async def test_build_validation_checks_every_declared_binary(tmp_path: Path) -> 
 
     assert result.success is False
     assert "/work/second" in result.summary
-    assert any("ASAN_OPTIONS=help=1 /work/first" in command for command in session.commands)
+    assert not any("ASAN_OPTIONS=help=1 /work/first" in command for command in session.commands)
     assert not any("ASAN_OPTIONS=help=1 /work/second" in command for command in session.commands)
 
 
@@ -508,6 +664,13 @@ async def test_build_validation_probes_configured_sanitizer(
     tc.mkdir()
     (tc / "binary_paths.txt").write_text("/work/target\n")
     _seed_elf(tmp_path / "work" / "target")
+    cve = _cve().model_copy(update={"sanitizer": sanitizer})
+    _seed_builder_baseline(
+        tc,
+        source_dir=tmp_path / "src",
+        work_dir=tmp_path / "work",
+        cve=cve,
+    )
     session = FakeSession(
         tc,
         responses=[
@@ -519,7 +682,7 @@ async def test_build_validation_probes_configured_sanitizer(
     result = await _executor(session).execute(
         "secb_build_validation",
         "[Build-Verifier] verify",
-        _cve().model_copy(update={"sanitizer": sanitizer}),
+        cve,
         {"root_id": uuid4()},
     )
 
@@ -530,18 +693,72 @@ async def test_build_validation_probes_configured_sanitizer(
     assert marker in probe_evidence.excerpt
 
 
-async def test_build_validation_rejects_sanitizer_probe_timeout_exit(tmp_path: Path) -> None:
+async def test_build_validation_stops_probe_after_sanitizer_marker(
+    tmp_path: Path,
+) -> None:
     tc = tmp_path / "testcase"
     tc.mkdir()
     (tc / "binary_paths.txt").write_text("/work/target\n")
     _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(
+        tc,
+        source_dir=tmp_path / "src",
+        work_dir=tmp_path / "work",
+        cve=_cve(),
+    )
     session = FakeSession(
         tc,
         responses=[
             _Resp("secb build", _clean("built")),
             _Resp(
                 "ASAN_OPTIONS=help=1 /work/target",
-                CommandOutcome(exit_code=124, output=_ASAN_HELP),
+                CommandOutcome(
+                    exit_code=143,
+                    output=_ASAN_HELP,
+                    termination=CommandTermination.STOPPED_AFTER_MARKER,
+                ),
+            ),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    assert result.success is True
+    assert session.marker_invocations == [
+        (
+            ("/work/target", "--help"),
+            _ASAN_HELP,
+            (("ASAN_OPTIONS", "help=1"),),
+            10.0,
+        )
+    ]
+    marker_evidence = next(
+        item for item in result.evidence if item.argv[0] == "host-sanitizer-startup-marker"
+    )
+    assert "termination=stopped_after_marker" in marker_evidence.excerpt
+
+
+async def test_build_validation_rejects_probe_timeout_without_sanitizer_marker(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n")
+    _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
+    session = FakeSession(
+        tc,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp(
+                "ASAN_OPTIONS=help=1 /work/target",
+                CommandOutcome(
+                    exit_code=124,
+                    output="generating lookup tables",
+                    termination=CommandTermination.TIMED_OUT,
+                ),
             ),
         ],
     )
@@ -552,6 +769,296 @@ async def test_build_validation_rejects_sanitizer_probe_timeout_exit(tmp_path: P
 
     assert result.success is False
     assert "sanitizer probe timed out" in result.summary
+
+
+async def test_build_validation_rejects_marker_reported_as_timeout(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n")
+    _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
+    session = FakeSession(
+        tc,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp(
+                "ASAN_OPTIONS=help=1 /work/target",
+                CommandOutcome(
+                    exit_code=124,
+                    output=_ASAN_HELP,
+                    termination=CommandTermination.TIMED_OUT,
+                ),
+            ),
+        ],
+    )
+
+    with pytest.raises(
+        ProcedureInfrastructureError,
+        match="preserved its success marker without stopping",
+    ):
+        await _executor(session).execute(
+            "secb_build_validation",
+            "[Build-Verifier] verify",
+            _cve(),
+            {"root_id": uuid4()},
+        )
+
+
+async def test_build_validation_rechecks_baseline_after_marker_stop(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n")
+    _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
+
+    class _ProbeMutatingSession(FakeSession):
+        async def run_until_marker(
+            self,
+            argv: tuple[str, ...],
+            *,
+            marker: str,
+            timeout: float,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            outcome = await super().run_until_marker(
+                argv,
+                marker=marker,
+                timeout=timeout,
+                env=env,
+            )
+            (self.source_dir / "build.sh").write_text(
+                "#!/bin/bash\nexit 17\n",
+                encoding="utf-8",
+            )
+            return outcome
+
+    session = _ProbeMutatingSession(
+        tc,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp(
+                "ASAN_OPTIONS=help=1 /work/target",
+                CommandOutcome(
+                    exit_code=143,
+                    output=_ASAN_HELP,
+                    termination=CommandTermination.STOPPED_AFTER_MARKER,
+                ),
+            ),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation",
+        "[Build-Verifier] verify",
+        _cve(),
+        {"root_id": uuid4()},
+    )
+
+    assert result.success is False
+    assert "baseline changed during the sanitizer startup probe" in result.summary
+    assert result.evidence[-1].argv == ("host-builder-baseline-recheck", "/work")
+
+
+async def test_build_validation_rejects_binary_pointer_mutated_by_probe(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n", encoding="utf-8")
+    _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
+
+    class _PointerMutatingSession(FakeSession):
+        async def run_until_marker(
+            self,
+            argv: tuple[str, ...],
+            *,
+            marker: str,
+            timeout: float,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            outcome = await super().run_until_marker(
+                argv,
+                marker=marker,
+                timeout=timeout,
+                env=env,
+            )
+            (self.testcase_dir / "binary_paths.txt").write_text(
+                "/work/target\n\n",
+                encoding="utf-8",
+            )
+            return outcome
+
+    session = _PointerMutatingSession(
+        tc,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp("ASAN_OPTIONS=help=1 /work/target", _clean(_ASAN_HELP)),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "binary pointer changed during the sanitizer startup probe" in result.summary
+
+
+async def test_build_validation_rejects_binary_mutated_by_probe(tmp_path: Path) -> None:
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/work/target\n", encoding="utf-8")
+    _seed_elf(tmp_path / "work" / "target")
+    _seed_builder_baseline(tc)
+
+    class _BinaryMutatingSession(FakeSession):
+        async def run_until_marker(
+            self,
+            argv: tuple[str, ...],
+            *,
+            marker: str,
+            timeout: float,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            outcome = await super().run_until_marker(
+                argv,
+                marker=marker,
+                timeout=timeout,
+                env=env,
+            )
+            _seed_elf(self.work_dir / "target", payload=b"mutated-by-probe")
+            return outcome
+
+    session = _BinaryMutatingSession(
+        tc,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp("ASAN_OPTIONS=help=1 /work/target", _clean(_ASAN_HELP)),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation", "[Build-Verifier] verify", _cve(), {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "declared Builder binary changed during the sanitizer startup probe" in result.summary
+
+
+@pytest.mark.parametrize(
+    ("index_flag", "expected_index_prefix"),
+    [
+        ("--assume-unchanged", "h "),
+        ("--skip-worktree", "S "),
+    ],
+)
+async def test_build_validation_rejects_worker_index_hidden_tracked_drift(
+    tmp_path: Path,
+    index_flag: str,
+    expected_index_prefix: str,
+) -> None:
+    source_dir = tmp_path / "src"
+    worktree = source_dir / "project"
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    source = worktree / "source.c"
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    _git(worktree, "add", "source.c")
+    _git(
+        worktree,
+        "-c",
+        "user.name=Procedure Tests",
+        "-c",
+        "user.email=procedure-tests@example.invalid",
+        "commit",
+        "-m",
+        "Seed fixture",
+    )
+    base_commit = _git(worktree, "rev-parse", "HEAD")
+    cve = _cve().model_copy(
+        update={"base_commit": base_commit, "work_dir": "/src/project"}
+    )
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text(
+        "/src/project/bin/app\n",
+        encoding="utf-8",
+    )
+    _seed_elf(worktree / "bin" / "app")
+    _seed_builder_baseline(tc, source_dir=source_dir, cve=cve)
+    _git(worktree, "update-index", index_flag, "source.c")
+    source.write_text("int main(void) { return 17; }\n", encoding="utf-8")
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[_Resp("secb build", _clean("built"))],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation",
+        "[Build-Verifier] verify",
+        cve,
+        {"root_id": uuid4()},
+    )
+
+    assert result.success is False
+    assert "tracked source or build inputs changed" in result.summary
+    assert _git(worktree, "ls-files", "-v", "source.c").startswith(expected_index_prefix)
+    assert session.marker_invocations == []
+
+
+async def test_build_validation_rejects_repo_diff_that_does_not_match_worktree(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "src"
+    worktree = source_dir / "project"
+    worktree.mkdir(parents=True)
+    _git(worktree, "init")
+    source = worktree / "source.c"
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    _git(worktree, "add", "source.c")
+    _git(
+        worktree,
+        "-c",
+        "user.name=Procedure Tests",
+        "-c",
+        "user.email=procedure-tests@example.invalid",
+        "commit",
+        "-m",
+        "Seed fixture",
+    )
+    base_commit = _git(worktree, "rev-parse", "HEAD")
+    cve = _cve().model_copy(
+        update={"base_commit": base_commit, "work_dir": "/src/project"}
+    )
+    tc = tmp_path / "testcase"
+    tc.mkdir()
+    (tc / "binary_paths.txt").write_text("/src/project/bin/app\n", encoding="utf-8")
+    _seed_elf(worktree / "bin" / "app")
+    (tc / "base_commit_hash").write_text(base_commit + "\n", encoding="utf-8")
+    (tc / "repo_changes.diff").write_bytes(b"\n")
+    (source_dir / "build.sh").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp("secb build", _clean("built")),
+            _Resp("ASAN_OPTIONS=help=1 /src/project/bin/app", _clean(_ASAN_HELP)),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_build_validation", "[Build-Verifier] verify", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "Builder commit does not match repo_changes.diff" in result.summary
+    assert not any("ASAN_OPTIONS" in command for command in session.commands)
 
 
 def _patch_plan(target: Path, exploit_identity: str) -> dict:
@@ -582,6 +1089,7 @@ async def _freeze_exploit_identity(
     cve: CVEInstance | None = None,
     source_dir: Path | None = None,
     work_dir: Path | None = None,
+    binary_path: str = "/work/bin/app",
 ) -> str:
     cve = cve or _cve()
     source_dir = source_dir or tc.parent / "src"
@@ -591,10 +1099,11 @@ async def _freeze_exploit_identity(
         cve=cve,
         source_dir=source_dir,
         work_dir=work_dir,
+        binary_path=binary_path,
     )
     session = FakeSession(
         tc,
-        responses=_repro(_crash(_ASAN_HEAP)),
+        responses=_repro(_crash(_ASAN_HEAP), binary_path=binary_path),
         source_dir=source_dir,
         work_dir=work_dir,
     )
@@ -610,13 +1119,19 @@ async def _seed_patch_inputs(
     *,
     cve: CVEInstance | None = None,
     target_bytes: bytes = b"void parse(void) { unsafe(); }\n",
+    binary_path: str = "/work/bin/app",
 ) -> None:
     cve = cve or _cve()
     source_dir = tc.parent / "src"
     target = source_dir / "project" / "vulnerable.c"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(target_bytes)
-    identity = await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
+    identity = await _freeze_exploit_identity(
+        tc,
+        cve=cve,
+        source_dir=source_dir,
+        binary_path=binary_path,
+    )
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
         json.dumps(_patch_plan(target, identity)), encoding="utf-8"
@@ -777,6 +1292,31 @@ async def test_patch_apply_rejects_binary_changed_after_exploit_freeze(tmp_path:
     assert not (tc / "model_patch.diff").exists()
 
 
+async def test_patch_apply_rejects_loader_dependency_changed_after_exploit_freeze(
+    tmp_path: Path,
+) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    library_dir = worktree / "libfaad" / ".libs"
+    _seed_faad_library(library_dir)
+    identity = await _freeze_faad_identity(tc, source_dir, cve)
+    _seed_elf(library_dir / "libfaad.so.2.0.0", payload=b"changed-after-freeze")
+
+    target = worktree / "vulnerable.c"
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
+    plan = _patch_plan(target, identity)
+    plan["target_file"] = "/src/faad2/vulnerable.c"
+    plan["allowed_paths"] = ["/src/faad2"]
+    (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = await _executor(FakeSession(tc, source_dir=source_dir)).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "project library content changed after Host validation" in result.summary
+    assert not (tc / "model_patch.diff").exists()
+
+
 async def test_patch_apply_rejects_build_input_changed_after_exploit_freeze(
     tmp_path: Path,
 ) -> None:
@@ -899,6 +1439,180 @@ async def test_exploit_validation_pass_writes_verdict_and_logs(tmp_path: Path) -
         assert "AddressSanitizer" in log
         assert "exit=1" in log
     assert (tc / "repro_loop.exit").read_text().strip() == "done"
+
+
+async def test_exploit_validation_rejects_pointer_mutated_during_replay(
+    tmp_path: Path,
+) -> None:
+    tc = tmp_path / "testcase"
+    _seed_exploit_inputs(tc)
+
+    class _ReplayMutatingSession(FakeSession):
+        mutated = False
+
+        async def run(
+            self,
+            argv: tuple[str, ...],
+            *,
+            timeout: float,
+            stdin: bytes | None = None,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            outcome = await super().run(argv, timeout=timeout, stdin=stdin, env=env)
+            if argv == ("/work/bin/app",) and stdin == b"proof" and not self.mutated:
+                (self.testcase_dir / "binary_paths.txt").write_text(
+                    "/work/bin/app\n\n",
+                    encoding="utf-8",
+                )
+                self.mutated = True
+            return outcome
+
+    session = _ReplayMutatingSession(tc, responses=_repro(_crash(_ASAN_HEAP)))
+
+    result = await _executor(session).execute(
+        "secb_exploit_validation",
+        "[Exploit-Validator] validate",
+        _cve(),
+        {"root_id": uuid4()},
+    )
+
+    assert result.success is False
+    assert "binary pointer changed after exploit validation" in result.summary
+    assert "VERDICT: FAIL" in (tc / "exploit_validation_results.txt").read_text()
+    assert not (tc / "exploit_input_identity.txt").exists()
+    assert not (session.identity_dir / "replay-contract.json").exists()
+
+
+async def test_exploit_validation_freezes_project_loader_path_for_faad(
+    tmp_path: Path,
+) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    _seed_faad_library(worktree / "libfaad" / ".libs")
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp(
+                f"ASAN_OPTIONS=help=1 {_FAAD_BINARY}",
+                CommandOutcome(exit_code=127, output=_FAAD_MISSING_LIBRARY),
+            ),
+            _Resp("/usr/bin/printenv LD_LIBRARY_PATH", _clean("/opt/runtime/lib\n")),
+            _Resp(
+                f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                _clean(_ASAN_HELP),
+            ),
+            *[
+                _Resp(
+                    f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                    _crash(_ASAN_HEAP),
+                )
+                for _ in range(3)
+            ],
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_exploit_validation", "[Exploit-Validator] validate", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is True
+    binary_invocations = [
+        invocation for invocation in session.invocations if invocation[0][0] == _FAAD_BINARY
+    ]
+    assert binary_invocations[0][2] == (("ASAN_OPTIONS", "help=1"),)
+    assert binary_invocations[1][2] == (
+        ("ASAN_OPTIONS", "help=1"),
+        ("LD_LIBRARY_PATH", _FAAD_LOADER_PATH),
+    )
+    replays = [
+        invocation
+        for invocation in binary_invocations
+        if invocation[0] == (_FAAD_BINARY,)
+    ]
+    assert len(replays) == 3
+    assert all(
+        ("LD_LIBRARY_PATH", _FAAD_LOADER_PATH) in invocation[2]
+        for invocation in replays
+    )
+    contract = json.loads((session.identity_dir / "replay-contract.json").read_text())
+    assert contract["schema_version"] == "3"
+    binding = contract["binary_bindings"][0]
+    assert binding["path"] == _FAAD_BINARY
+    assert binding["mode"] == 0o755
+    assert len(binding["sha256"]) == 64
+    assert binding["loader"] == {
+        "missing_soname": "libfaad.so.2",
+        "candidate_path": "/src/faad2/libfaad/.libs/libfaad.so.2",
+        "resolved_target_path": "/src/faad2/libfaad/.libs/libfaad.so.2.0.0",
+        "resolved_target_sha256": hashlib.sha256(
+            (worktree / "libfaad" / ".libs" / "libfaad.so.2.0.0").read_bytes()
+        ).hexdigest(),
+        "effective_loader_path": _FAAD_LOADER_PATH,
+    }
+
+
+async def test_exploit_validation_rejects_ambiguous_project_loader_library(
+    tmp_path: Path,
+) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    _seed_faad_library(worktree / "libfaad" / ".libs")
+    _seed_faad_library(worktree / "duplicate" / ".libs")
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp(
+                f"ASAN_OPTIONS=help=1 {_FAAD_BINARY}",
+                CommandOutcome(exit_code=127, output=_FAAD_MISSING_LIBRARY),
+            ),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_exploit_validation", "[Exploit-Validator] validate", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "multiple project-local libfaad.so.2 candidates" in result.summary
+    assert not any(
+        invocation[0] == ("/usr/bin/printenv", "LD_LIBRARY_PATH")
+        for invocation in session.invocations
+    )
+    assert sum(invocation[0][0] == _FAAD_BINARY for invocation in session.invocations) == 1
+
+
+async def test_exploit_validation_rejects_project_loader_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    outside = tmp_path / "outside" / "libfaad.so.2.0.0"
+    _seed_elf(outside)
+    library_dir = worktree / "libfaad" / ".libs"
+    library_dir.mkdir(parents=True)
+    (library_dir / "libfaad.so.2").symlink_to(outside)
+    session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp(
+                f"ASAN_OPTIONS=help=1 {_FAAD_BINARY}",
+                CommandOutcome(exit_code=127, output=_FAAD_MISSING_LIBRARY),
+            ),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_exploit_validation", "[Exploit-Validator] validate", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "project-local libfaad.so.2 is unsafe" in result.summary
+    assert "resolved target escapes" in result.summary
+    assert not any(
+        invocation[0] == ("/usr/bin/printenv", "LD_LIBRARY_PATH")
+        for invocation in session.invocations
+    )
+    assert sum(invocation[0][0] == _FAAD_BINARY for invocation in session.invocations) == 1
 
 
 async def test_exploit_validation_signature_mismatch_fails(tmp_path: Path) -> None:
@@ -1248,14 +1962,16 @@ async def test_exploit_validation_unresolved_binary_preflight_fails(tmp_path: Pa
     ).read_text()
 
 
-async def test_exploit_validation_repro_timeout_returns_failed_with_digest(
+async def test_exploit_validation_repro_timeout_with_matching_crash_still_fails(
     tmp_path: Path,
 ) -> None:
-    # Given: the first Host-bound direct replay times out with partial output
+    # Given: the first Host-bound replay times out after printing the expected crash
     tc = tmp_path / "testcase"
     _seed_exploit_inputs(tc)
     timeout_outcome = CommandOutcome(
-        exit_code=-1, output="partial repro output before the timeout", timed_out=True
+        exit_code=124,
+        output=f"{_ASAN_HEAP}\npartial repro output before the timeout",
+        termination=CommandTermination.TIMED_OUT,
     )
     session = FakeSession(
         tc, responses=[*_binary_validation(), *_direct_replay(timeout_outcome)]
@@ -1267,11 +1983,19 @@ async def test_exploit_validation_repro_timeout_returns_failed_with_digest(
         "secb_exploit_validation", "[Exploit-Validator]", _cve(), {"root_id": uuid4()}
     )
 
-    # Then: a failed result whose digest carries the timeout reason and partial tail
+    # Then: startup-marker semantics do not weaken replay deadlines
     assert result.success is False
     assert result.digest
     assert "timed out" in result.summary
     assert "partial repro output before the timeout" in result.digest
+    assert session.marker_invocations == [
+        (
+            ("/work/bin/app", "--help"),
+            _ASAN_HELP,
+            (("ASAN_OPTIONS", "help=1"),),
+            10.0,
+        )
+    ]
 
 
 async def test_exploit_verdict_keys_match_deliverables_contract(tmp_path: Path) -> None:
@@ -1303,8 +2027,9 @@ async def test_exploit_records_evidence_per_command(tmp_path: Path) -> None:
         "secb_exploit_validation", "[Exploit-Validator]", _cve(), {"root_id": uuid4()}
     )
 
-    # Then: one ProcedureEvidence per executed command, each fully populated
-    assert len(result.evidence) == 5
+    # Then: commands and the separate marker observation are fully evidenced
+    assert len(result.evidence) == 6
+    assert any(item.argv[0] == "host-sanitizer-startup-marker" for item in result.evidence)
     for item in result.evidence:
         assert item.argv
         assert len(item.output_sha256) == 64
@@ -1352,6 +2077,160 @@ async def test_patch_validation_pass_writes_verdict_and_logs(tmp_path: Path) -> 
     for n in (1, 2, 3):
         assert (tc / f"fix_run_{n}.log").read_text().rstrip().endswith("exit=0")
     assert (tc / "fix_loop.exit").read_text().strip() == "done"
+
+
+async def test_patch_validation_reuses_frozen_faad_loader_path(tmp_path: Path) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    _seed_faad_library(worktree / "libfaad" / ".libs")
+    exploit_session = FakeSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp(
+                f"ASAN_OPTIONS=help=1 {_FAAD_BINARY}",
+                CommandOutcome(exit_code=127, output=_FAAD_MISSING_LIBRARY),
+            ),
+            _Resp("/usr/bin/printenv LD_LIBRARY_PATH", _clean("/opt/runtime/lib\n")),
+            _Resp(
+                f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                _clean(_ASAN_HELP),
+            ),
+            *[
+                _Resp(
+                    f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                    _crash(_ASAN_HEAP),
+                )
+                for _ in range(3)
+            ],
+        ],
+    )
+    exploit = await _executor(exploit_session).execute(
+        "secb_exploit_validation", "[Exploit-Validator] validate", cve, {"root_id": uuid4()}
+    )
+    assert exploit.success is True
+
+    target = worktree / "vulnerable.c"
+    identity = (tc / "exploit_input_identity.txt").read_text(encoding="utf-8").strip()
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
+    plan = _patch_plan(target, identity)
+    plan["target_file"] = "/src/faad2/vulnerable.c"
+    plan["allowed_paths"] = ["/src/faad2"]
+    (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    approval = await _executor(FakeSession(tc, source_dir=source_dir)).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", cve, {"root_id": uuid4()}
+    )
+    assert approval.success is True
+
+    class _RebuildingFaadSession(FakeSession):
+        async def run(
+            self,
+            argv: tuple[str, ...],
+            *,
+            timeout: float,
+            stdin: bytes | None = None,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            if argv == ("/usr/local/bin/secb", "build"):
+                _seed_elf(
+                    worktree / "libfaad" / ".libs" / "libfaad.so.2.0.0",
+                    payload=b"rebuilt-project-library",
+                )
+            return await super().run(argv, timeout=timeout, stdin=stdin, env=env)
+
+    session = _RebuildingFaadSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp("secb patch", _clean("applied")),
+            _Resp("secb build", _clean("rebuilt")),
+            _Resp(
+                f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                _clean(_ASAN_HELP),
+            ),
+            *[
+                _Resp(
+                    f"LD_LIBRARY_PATH={_FAAD_LOADER_PATH} {_FAAD_BINARY}",
+                    _clean(_NO_CRASH),
+                )
+                for _ in range(3)
+            ],
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_patch_validation", "[Patch-Validator] validate", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is True
+    binary_invocations = [
+        invocation for invocation in session.invocations if invocation[0][0] == _FAAD_BINARY
+    ]
+    assert len(binary_invocations) == 4
+    assert binary_invocations[0][0] == (_FAAD_BINARY, "--help")
+    assert all(
+        ("LD_LIBRARY_PATH", _FAAD_LOADER_PATH) in invocation[2]
+        for invocation in binary_invocations
+    )
+    assert not any(
+        invocation[0] == ("/usr/bin/printenv", "LD_LIBRARY_PATH")
+        for invocation in session.invocations
+    )
+
+
+async def test_patch_validation_rejects_rebuilt_loader_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
+    library_dir = worktree / "libfaad" / ".libs"
+    _seed_faad_library(library_dir)
+    identity = await _freeze_faad_identity(tc, source_dir, cve)
+
+    target = worktree / "vulnerable.c"
+    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
+    plan = _patch_plan(target, identity)
+    plan["target_file"] = "/src/faad2/vulnerable.c"
+    plan["allowed_paths"] = ["/src/faad2"]
+    (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    approval = await _executor(FakeSession(tc, source_dir=source_dir)).execute(
+        "secb_patch_apply", "[Patch-Applier] apply", cve, {"root_id": uuid4()}
+    )
+    assert approval.success is True
+
+    outside = tmp_path / "outside" / "libfaad.so.2.0.0"
+    _seed_elf(outside, payload=b"outside-loader")
+
+    class _EscapingRebuildSession(FakeSession):
+        async def run(
+            self,
+            argv: tuple[str, ...],
+            *,
+            timeout: float,
+            stdin: bytes | None = None,
+            env: tuple[tuple[str, str], ...] = (),
+        ) -> CommandOutcome:
+            if argv == ("/usr/local/bin/secb", "build"):
+                soname = library_dir / "libfaad.so.2"
+                soname.unlink()
+                soname.symlink_to(outside)
+            return await super().run(argv, timeout=timeout, stdin=stdin, env=env)
+
+    session = _EscapingRebuildSession(
+        tc,
+        source_dir=source_dir,
+        responses=[
+            _Resp("secb patch", _clean("applied")),
+            _Resp("secb build", _clean("rebuilt")),
+        ],
+    )
+
+    result = await _executor(session).execute(
+        "secb_patch_validation", "[Patch-Validator] validate", cve, {"root_id": uuid4()}
+    )
+
+    assert result.success is False
+    assert "post-patch binary validation failed" in result.summary
+    assert "resolved target escapes" in result.summary
+    assert session.marker_invocations == []
 
 
 async def test_patch_validation_accepts_declared_nonzero_normal_exit(tmp_path: Path) -> None:
@@ -1741,7 +2620,14 @@ async def test_patch_validation_post_patch_crash_fails(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("bad_outcome", "expected_reason"),
     [
-        (CommandOutcome(exit_code=124, output="hung", timed_out=True), "timed out"),
+        (
+            CommandOutcome(
+                exit_code=124,
+                output=_ASAN_HEAP,
+                termination=CommandTermination.TIMED_OUT,
+            ),
+            "timed out",
+        ),
         (CommandOutcome(exit_code=7, output="repro error"), "exited nonzero (7)"),
         (CommandOutcome(exit_code=-11, output=""), "terminated by signal 11"),
         (CommandOutcome(exit_code=0, output="Assertion `size > 0' failed."), "assertion"),
@@ -1783,6 +2669,9 @@ async def test_patch_validation_rejects_every_failed_post_patch_outcome(
     verdict = (tc / "patch_validation_results.txt").read_text()
     assert "VERDICT: FAIL" in verdict
     assert "REPRO_RUNS_NO_CRASH: 3/3" not in verdict
+    assert [invocation[0] for invocation in session.marker_invocations] == [
+        ("/work/bin/app", "--help")
+    ]
 
 
 async def test_patch_validation_build_timeout_returns_failed_with_digest(tmp_path: Path) -> None:
@@ -1795,7 +2684,11 @@ async def test_patch_validation_build_timeout_returns_failed_with_digest(tmp_pat
             _Resp("secb patch", _clean("applied")),
             _Resp(
                 "secb build",
-                CommandOutcome(exit_code=-1, output="partial build log tail", timed_out=True),
+                CommandOutcome(
+                    exit_code=124,
+                    output="partial build log tail",
+                    termination=CommandTermination.TIMED_OUT,
+                ),
             ),
         ],
     )

@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
@@ -122,6 +123,13 @@ _SANITIZER_PROBES: dict[str, tuple[str, str]] = {
     "undefined": ("UBSAN_OPTIONS", "Available flags for UndefinedBehaviorSanitizer:"),
 }
 _SANITIZER_PROBE_SECONDS = 10
+_LOADER_SEARCH_LIMIT = 200_000
+_SONAME_RX = re.compile(r"[A-Za-z0-9_.+\-]+")
+_MISSING_SHARED_LIBRARY_RX = re.compile(
+    r"error while loading shared libraries: "
+    r"(?P<soname>[A-Za-z0-9_.+\-]+): cannot open shared object file: "
+    r"No such file or directory"
+)
 
 _REPLAY_CONTRACT_JSON = "replay-contract.json"
 _PATCH_APPROVAL_JSON = "patch-approval.json"
@@ -151,13 +159,63 @@ class ProcedureInfrastructureError(RuntimeError):
     """
 
 
+class CommandTermination(StrEnum):
+    """Why a Host-controlled container command stopped."""
+
+    COMPLETED = "completed"
+    STOPPED_AFTER_MARKER = "stopped_after_marker"
+    TIMED_OUT = "timed_out"
+
+
 @dataclass(frozen=True, slots=True)
 class CommandOutcome:
     """Result of one synchronous in-container command."""
 
     exit_code: int
     output: str
-    timed_out: bool = False
+    termination: CommandTermination = CommandTermination.COMPLETED
+
+    @property
+    def timed_out(self) -> bool:
+        return self.termination is CommandTermination.TIMED_OUT
+
+
+class _LoaderBinding(BaseModel):
+    """Host-frozen project dependency used to start one declared binary."""
+
+    model_config = {"frozen": True}
+
+    missing_soname: str = ""
+    candidate_path: str = ""
+    resolved_target_path: str = ""
+    resolved_target_sha256: str = ""
+    effective_loader_path: str = ""
+
+
+class _BinaryBinding(BaseModel):
+    """Exact declared binary plus the loader dependency proven for it."""
+
+    model_config = {"frozen": True}
+
+    path: str
+    mode: int
+    sha256: str
+    loader: _LoaderBinding
+
+
+@dataclass(frozen=True, slots=True)
+class _DeclaredBinarySet:
+    pointer_bytes: bytes
+    bindings: tuple[_BinaryBinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedProjectLibrary:
+    soname: str
+    candidate_path: str
+    resolved_target_path: str
+    resolved_target_sha256: str
+    directory: str
 
 
 class _ReplayContract(BaseModel):
@@ -165,7 +223,7 @@ class _ReplayContract(BaseModel):
 
     model_config = {"frozen": True}
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["3"] = "3"
     instance_id: str
     base_commit: str
     sanitizer: str
@@ -176,7 +234,7 @@ class _ReplayContract(BaseModel):
     repro_sha256: str
     poc_path: str
     poc_sha256: str
-    binary_paths: tuple[str, ...]
+    binary_bindings: tuple[_BinaryBinding, ...]
     selected_binary: str
     selected_binary_sha256: str
     binary_pointer_sha256: str
@@ -208,10 +266,11 @@ class ProcedureSession(Protocol):
     """The run's container-session slice a procedure drives.
 
     The directories are host mirrors of the run's three worker-writable bind mounts.
-    ``run`` executes an argv vector directly inside the run's container and returns
-    its exit code + combined output; a timeout returns
-    ``CommandOutcome(timed_out=True, ...)`` with the partial output rather than
-    raising (a timeout is a task-level failure, not an infrastructure fault).
+    ``run`` executes an argv vector directly inside the run's container. The
+    startup-only ``run_until_marker`` variant streams until its Host-supplied marker,
+    process exit, or deadline and resets the container before returning. Both return
+    combined output and an explicit termination state; command deadlines are task
+    failures, not infrastructure errors.
     """
 
     testcase_dir: Path
@@ -225,6 +284,15 @@ class ProcedureSession(Protocol):
         *,
         timeout: float,
         stdin: bytes | None = None,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome: ...
+
+    async def run_until_marker(
+        self,
+        argv: tuple[str, ...],
+        *,
+        marker: str,
+        timeout: float,
         env: tuple[tuple[str, str], ...] = (),
     ) -> CommandOutcome: ...
 
@@ -322,16 +390,64 @@ async def _run_build_validation(
     if build_out.exit_code != 0 or build_out.timed_out:
         reason = _timeout_or(build_out, "secb build failed")
         return _failed(_PROCEDURE_BUILD, f"Build validation FAIL: {reason}", reason, evidence)
-    binary_reason = await _validate_declared_binaries(session, cve, evidence)
+    if cve is None:
+        reason = "CVE context is missing; configured sanitizer cannot be verified"
+        return _failed(_PROCEDURE_BUILD, f"Build validation FAIL: {reason}", reason, evidence)
+    source_head, baseline_sha256, baseline_reason = await asyncio.to_thread(
+        _measure_builder_baseline, session, cve
+    )
+    evidence.append(
+        _host_baseline_evidence(
+            "host-builder-baseline-check",
+            cve.work_dir,
+            source_head,
+            baseline_sha256,
+            baseline_reason,
+        )
+    )
+    if baseline_reason is not None:
+        return _failed(
+            _PROCEDURE_BUILD,
+            f"Build validation FAIL: {baseline_reason}",
+            baseline_reason,
+            evidence,
+        )
+    binary_bindings, binary_reason = await _validate_declared_binaries(session, cve, evidence)
     if binary_reason is not None:
         return _failed(
             _PROCEDURE_BUILD, f"Build validation FAIL: {binary_reason}", binary_reason, evidence
         )
-    binary_count = len(_nonempty_lines(_read(session.testcase_dir / _BINARY_POINTER)))
+    final_head, final_baseline_sha256, final_reason = await asyncio.to_thread(
+        _measure_builder_baseline, session, cve
+    )
+    if final_reason is None and (final_head, final_baseline_sha256) != (
+        source_head,
+        baseline_sha256,
+    ):
+        final_reason = "Builder baseline changed during the sanitizer startup probe"
+    evidence.append(
+        _host_baseline_evidence(
+            "host-builder-baseline-recheck",
+            cve.work_dir,
+            final_head,
+            final_baseline_sha256,
+            final_reason,
+        )
+    )
+    if final_reason is not None:
+        return _failed(
+            _PROCEDURE_BUILD,
+            f"Build validation FAIL: {final_reason}",
+            final_reason,
+            evidence,
+        )
+    if binary_bindings is None:
+        raise ProcedureInfrastructureError("successful binary validation omitted its bindings")
+    binary_count = len(binary_bindings)
     return ProcedureResult(
         success=True,
         summary=(
-            "Build validation PASS: secb build succeeded and "
+            "Build validation PASS: secb build and the exact Builder baseline succeeded; "
             f"{binary_count} declared ELF binary/binaries initialized the configured sanitizer"
         ),
         evidence=tuple(evidence),
@@ -342,39 +458,373 @@ async def _validate_declared_binaries(
     session: ProcedureSession,
     cve: CVEInstance | None,
     evidence: list[ProcedureEvidence],
-) -> str | None:
+    *,
+    frozen_bindings: tuple[_BinaryBinding, ...] | None = None,
+    frozen_pointer_sha256: str | None = None,
+) -> tuple[tuple[_BinaryBinding, ...] | None, str | None]:
     if cve is None:
-        return "CVE context is missing; configured sanitizer cannot be verified"
+        return None, "CVE context is missing; configured sanitizer cannot be verified"
     probe = _SANITIZER_PROBES.get(cve.sanitizer.strip().lower())
     if probe is None:
-        return f"unsupported configured sanitizer {cve.sanitizer!r}"
+        return None, f"unsupported configured sanitizer {cve.sanitizer!r}"
 
-    paths = _nonempty_lines(_read(session.testcase_dir / _BINARY_POINTER))
-    if not paths:
-        return f"Builder binary pointer {_BINARY_POINTER} names no paths"
+    initial, snapshot_reason = _capture_declared_binary_set(session, evidence=evidence)
+    if initial is None:
+        return None, snapshot_reason
+    if frozen_pointer_sha256 is not None and hashlib.sha256(
+        initial.pointer_bytes
+    ).hexdigest() != frozen_pointer_sha256:
+        return None, "Builder binary pointer changed after exploit validation"
+    if frozen_bindings is not None and tuple(
+        binding.path for binding in frozen_bindings
+    ) != tuple(binding.path for binding in initial.bindings):
+        return None, "Host-frozen binary bindings do not match the declared binaries"
+
     environment, marker = probe
+    validated: list[_BinaryBinding] = []
+    for index, binary in enumerate(initial.bindings):
+        loader, runtime_reason = await _probe_declared_binary(
+            session,
+            cve,
+            binary.path,
+            environment,
+            marker,
+            evidence,
+            frozen_loader_binding=(
+                frozen_bindings[index].loader if frozen_bindings is not None else None
+            ),
+        )
+        if runtime_reason is not None:
+            return None, runtime_reason
+        if loader is None:
+            raise ProcedureInfrastructureError("successful sanitizer probe omitted its loader binding")
+        validated.append(binary.model_copy(update={"loader": loader}))
+
+    final, final_reason = _capture_declared_binary_set(session)
+    if final is None:
+        return None, final_reason
+    if final.pointer_bytes != initial.pointer_bytes:
+        return None, "Builder binary pointer changed during the sanitizer startup probe"
+    if final.bindings != initial.bindings:
+        return None, "A declared Builder binary changed during the sanitizer startup probe"
+
+    for binding in validated:
+        _current, loader_reason = _refresh_loader_binding(
+            session,
+            cve,
+            binding.loader,
+            allow_content_change=False,
+        )
+        if loader_reason is not None:
+            return None, f"Builder binary {binding.path} {loader_reason}"
+    return tuple(validated), None
+
+
+def _capture_declared_binary_set(
+    session: ProcedureSession,
+    *,
+    evidence: list[ProcedureEvidence] | None = None,
+) -> tuple[_DeclaredBinarySet | None, str | None]:
+    try:
+        pointer_bytes = _read_regular_bytes(session.testcase_dir / _BINARY_POINTER)
+        pointer_text = pointer_bytes.decode("utf-8")
+    except (OSError, UnicodeError):
+        return None, f"Builder binary pointer {_BINARY_POINTER} is missing or invalid"
+    paths = _nonempty_lines(pointer_text)
+    if not paths:
+        return None, f"Builder binary pointer {_BINARY_POINTER} names no paths"
+
+    bindings: list[_BinaryBinding] = []
     for path in paths:
         if not PurePosixPath(path).is_absolute():
-            return f"Builder binary path must be absolute: {path}"
+            return None, f"Builder binary path must be absolute: {path}"
         if not _is_rebuildable_binary_path(path):
-            return f"Builder binary must remain at a rebuildable /src or /work path: {path}"
-        binary = _resolve_workspace_file(session, path)
-        structural_reason = _validate_host_binary(binary)
-        evidence.append(_host_file_evidence("host-elf-check", path, structural_reason))
-        if structural_reason is not None:
-            return f"Builder binary {path} is not a non-empty executable ELF"
-        runtime = await _run_cmd(
+            return None, f"Builder binary must remain at a rebuildable /src or /work path: {path}"
+        binding, structural_reason = _capture_binary_binding(session, path)
+        if evidence is not None:
+            evidence.append(_host_file_evidence("host-elf-check", path, structural_reason))
+        if binding is None:
+            if structural_reason == "binary path is outside the mounted workspace":
+                return None, (
+                    f"Builder binary does not resolve inside the run workspace: {path}"
+                )
+            return None, f"Builder binary {path} is not a non-empty executable ELF"
+        bindings.append(binding)
+    return _DeclaredBinarySet(pointer_bytes=pointer_bytes, bindings=tuple(bindings)), None
+
+
+def _capture_binary_binding(
+    session: ProcedureSession, path: str
+) -> tuple[_BinaryBinding | None, str | None]:
+    binary = _resolve_workspace_file(session, path)
+    structural_reason = _validate_host_binary(binary)
+    if binary is None or structural_reason is not None:
+        return None, structural_reason
+    try:
+        mode = stat.S_IMODE(binary.lstat().st_mode)
+        digest = _sha256_file(binary)
+    except OSError:
+        return None, "binary is not a stable regular file"
+    return (
+        _BinaryBinding(
+            path=path,
+            mode=mode,
+            sha256=digest,
+            loader=_LoaderBinding(),
+        ),
+        None,
+    )
+
+
+async def _probe_declared_binary(
+    session: ProcedureSession,
+    cve: CVEInstance,
+    binary_path: str,
+    sanitizer_environment: str,
+    sanitizer_marker: str,
+    evidence: list[ProcedureEvidence],
+    *,
+    frozen_loader_binding: _LoaderBinding | None,
+) -> tuple[_LoaderBinding | None, str | None]:
+    if frozen_loader_binding is None:
+        loader = _LoaderBinding()
+    else:
+        loader, loader_reason = _refresh_loader_binding(
             session,
-            (path, "--help"),
-            timeout=float(_SANITIZER_PROBE_SECONDS),
-            evidence=evidence,
-            env=((environment, "help=1"),),
+            cve,
+            frozen_loader_binding,
+            allow_content_change=True,
         )
-        if runtime.timed_out or runtime.exit_code == 124:
-            return f"Builder binary {path} sanitizer probe timed out"
-        if marker not in runtime.output:
-            return f"Builder binary {path} did not initialize the {cve.sanitizer} sanitizer runtime"
+        if loader is None:
+            return None, f"Host-frozen project library binding is invalid: {loader_reason}"
+    runtime = await _run_sanitizer_probe(
+        session,
+        binary_path,
+        sanitizer_environment,
+        sanitizer_marker,
+        loader.effective_loader_path,
+        evidence,
+    )
+    if runtime.termination is CommandTermination.STOPPED_AFTER_MARKER:
+        return loader, None
+    if runtime.termination is CommandTermination.TIMED_OUT:
+        return None, f"Builder binary {binary_path} sanitizer probe timed out"
+
+    missing_library = _canonical_missing_soname(binary_path, runtime)
+    if missing_library is None:
+        return None, (
+            f"Builder binary {binary_path} did not initialize the "
+            f"{cve.sanitizer} sanitizer runtime"
+        )
+    if frozen_loader_binding is not None:
+        return None, (
+            f"Builder binary {binary_path} could not load {missing_library} with the "
+            "Host-frozen project library binding"
+        )
+
+    library, resolution_reason = _resolve_project_library(session, cve, missing_library)
+    evidence.append(
+        _host_library_evidence(
+            binary_path,
+            missing_library,
+            library.directory if library is not None else None,
+            resolution_reason,
+        )
+    )
+    if resolution_reason is not None:
+        return None, f"Builder binary {binary_path} {resolution_reason}"
+    if library is None:
+        raise ProcedureInfrastructureError("successful library resolution omitted its binding")
+    inherited, inherited_reason = await _container_loader_path(session, evidence)
+    if inherited_reason is not None:
+        return None, inherited_reason
+    loader = _LoaderBinding(
+        missing_soname=library.soname,
+        candidate_path=library.candidate_path,
+        resolved_target_path=library.resolved_target_path,
+        resolved_target_sha256=library.resolved_target_sha256,
+        effective_loader_path=_prepend_loader_path(library.directory, inherited),
+    )
+
+    retry = await _run_sanitizer_probe(
+        session,
+        binary_path,
+        sanitizer_environment,
+        sanitizer_marker,
+        loader.effective_loader_path,
+        evidence,
+    )
+    if retry.termination is CommandTermination.STOPPED_AFTER_MARKER:
+        return loader, None
+    if retry.termination is CommandTermination.TIMED_OUT:
+        return None, f"Builder binary {binary_path} sanitizer probe timed out"
+    return None, (
+        f"Builder binary {binary_path} did not initialize the {cve.sanitizer} sanitizer runtime"
+    )
+
+
+def _refresh_loader_binding(
+    session: ProcedureSession,
+    cve: CVEInstance,
+    frozen: _LoaderBinding,
+    *,
+    allow_content_change: bool,
+) -> tuple[_LoaderBinding | None, str | None]:
+    shape_reason = _validate_loader_binding_shape(frozen)
+    if shape_reason is not None:
+        return None, shape_reason
+    if not frozen.missing_soname:
+        return frozen, None
+
+    current, resolution_reason = _resolve_project_library(
+        session,
+        cve,
+        frozen.missing_soname,
+    )
+    if current is None:
+        return None, resolution_reason
+    if current.candidate_path != frozen.candidate_path:
+        return None, "project library candidate changed after Host validation"
+    if current.resolved_target_path != frozen.resolved_target_path:
+        return None, "project library symlink target changed after Host validation"
+    if (
+        not allow_content_change
+        and current.resolved_target_sha256 != frozen.resolved_target_sha256
+    ):
+        return None, "project library content changed after Host validation"
+    loader_components = frozen.effective_loader_path.split(":")
+    if not loader_components or loader_components[0] != current.directory:
+        return None, "effective loader path no longer starts with the project library directory"
+    return (
+        frozen.model_copy(
+            update={"resolved_target_sha256": current.resolved_target_sha256}
+        ),
+        None,
+    )
+
+
+def _validate_loader_binding_shape(binding: _LoaderBinding) -> str | None:
+    loader_reason = _validate_loader_path(binding.effective_loader_path)
+    if loader_reason is not None:
+        return f"effective loader path is invalid: {loader_reason}"
+    dependency_fields = (
+        binding.candidate_path,
+        binding.resolved_target_path,
+        binding.resolved_target_sha256,
+    )
+    if not binding.missing_soname:
+        if any(dependency_fields) or binding.effective_loader_path:
+            return "loader binding has dependency fields without a missing SONAME"
+        return None
+    if _SONAME_RX.fullmatch(binding.missing_soname) is None:
+        return "loader binding has an unsafe missing SONAME"
+    if not all(dependency_fields):
+        return "loader binding is missing project dependency identity"
+    if not re.fullmatch(r"[0-9a-f]{64}", binding.resolved_target_sha256):
+        return "loader binding has an invalid project dependency digest"
+    for path in (binding.candidate_path, binding.resolved_target_path):
+        parsed = PurePosixPath(path)
+        if not parsed.is_absolute() or ".." in parsed.parts:
+            return f"loader binding has an unsafe project path: {path}"
     return None
+
+
+async def _run_sanitizer_probe(
+    session: ProcedureSession,
+    binary_path: str,
+    sanitizer_environment: str,
+    sanitizer_marker: str,
+    loader_path: str,
+    evidence: list[ProcedureEvidence],
+) -> CommandOutcome:
+    environment = [(sanitizer_environment, "help=1")]
+    if loader_path:
+        environment.append(("LD_LIBRARY_PATH", loader_path))
+    outcome = await session.run_until_marker(
+        (binary_path, "--help"),
+        marker=sanitizer_marker,
+        timeout=float(_SANITIZER_PROBE_SECONDS),
+        env=tuple(environment),
+    )
+    evidence.append(_evidence_for((binary_path, "--help"), outcome))
+    marker_seen = sanitizer_marker in outcome.output
+    if outcome.termination is CommandTermination.STOPPED_AFTER_MARKER and not marker_seen:
+        raise ProcedureInfrastructureError(
+            "marker-aware procedure stopped without preserving its success marker"
+        )
+    if marker_seen and outcome.termination is not CommandTermination.STOPPED_AFTER_MARKER:
+        raise ProcedureInfrastructureError(
+            "marker-aware procedure preserved its success marker without stopping"
+        )
+    if marker_seen:
+        evidence.append(
+            _host_marker_evidence(
+                binary_path,
+                sanitizer_marker,
+                outcome.termination,
+            )
+        )
+    return outcome
+
+
+def _canonical_missing_soname(
+    binary_path: str, outcome: CommandOutcome
+) -> str | None:
+    if outcome.timed_out or outcome.exit_code != 127:
+        return None
+    prefix = f"{binary_path}: "
+    matches: list[str] = []
+    for line in outcome.output.splitlines():
+        if not line.startswith(prefix):
+            continue
+        match = _MISSING_SHARED_LIBRARY_RX.fullmatch(line[len(prefix) :])
+        if match is not None:
+            matches.append(match.group("soname"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _validate_loader_path(value: str) -> str | None:
+    if any(character in value for character in ("\0", "\r", "\n")):
+        return "it contains unsupported control characters"
+    if not value:
+        return None
+    for component in value.split(":"):
+        path = PurePosixPath(component)
+        if not component:
+            return "it contains an empty component"
+        if not path.is_absolute() or ".." in path.parts:
+            return f"component is not an absolute normalized path: {component}"
+    return None
+
+
+def _prepend_loader_path(project_directory: str, inherited: str) -> str:
+    components = [project_directory]
+    components.extend(
+        component
+        for component in inherited.split(":")
+        if component and component != project_directory
+    )
+    return ":".join(components)
+
+
+async def _container_loader_path(
+    session: ProcedureSession, evidence: list[ProcedureEvidence]
+) -> tuple[str, str | None]:
+    outcome = await _run_cmd(
+        session,
+        ("/usr/bin/printenv", "LD_LIBRARY_PATH"),
+        timeout=float(_SANITIZER_PROBE_SECONDS),
+        evidence=evidence,
+    )
+    if outcome.exit_code == 1 and not outcome.output:
+        return "", None
+    if outcome.exit_code != 0 or outcome.timed_out:
+        return "", "container LD_LIBRARY_PATH could not be frozen safely"
+    value = outcome.output[:-1] if outcome.output.endswith("\n") else outcome.output
+    loader_reason = _validate_loader_path(value)
+    if loader_reason is not None:
+        return "", f"container LD_LIBRARY_PATH is unsafe: {loader_reason}"
+    return value, None
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +942,7 @@ async def _capture_replay_contract(
     session: ProcedureSession,
     cve: CVEInstance | None,
     *,
+    binary_bindings: tuple[_BinaryBinding, ...],
     include_verdict: bool = False,
     frozen_binary_sha256: str | None = None,
 ) -> tuple[_ReplayContract | None, str | None]:
@@ -523,29 +974,34 @@ async def _capture_replay_contract(
     if poc_file is None:
         return None, f"PoC path must resolve to a regular file under /testcase: {poc_path}"
 
-    binary_paths = tuple(_nonempty_lines(_read(tc / _BINARY_POINTER)))
+    try:
+        binary_pointer_bytes = _read_regular_bytes(tc / _BINARY_POINTER)
+        binary_paths = tuple(_nonempty_lines(binary_pointer_bytes.decode("utf-8")))
+    except (OSError, UnicodeError):
+        return None, f"Builder binary pointer {_BINARY_POINTER} is missing or invalid"
     if not binary_paths:
         return None, f"Builder binary pointer {_BINARY_POINTER} names no paths"
     if any(not PurePosixPath(path).is_absolute() for path in binary_paths):
         return None, "every Builder binary path must be absolute"
     if any(not _is_rebuildable_binary_path(path) for path in binary_paths):
         return None, "every Builder binary must remain at a rebuildable /src or /work path"
+    if tuple(binding.path for binding in binary_bindings) != binary_paths:
+        return None, "Host-frozen binary bindings do not match the declared binaries"
+    for binding in binary_bindings:
+        binding_reason = _validate_binary_binding_shape(binding)
+        if binding_reason is not None:
+            return None, f"Host-frozen binary binding is invalid: {binding_reason}"
 
     selected_binary = binary_paths[0]
-    selected_binary_file: Path | None = None
     selected_binary_sha256 = frozen_binary_sha256
     if selected_binary_sha256 is None:
-        selected_binary_file = _resolve_workspace_file(session, selected_binary)
-        if selected_binary_file is None:
-            return None, (
-                f"selected binary does not resolve inside the run workspace: {selected_binary}"
-            )
-        if _validate_host_binary(selected_binary_file) is not None:
-            return None, f"selected binary is not a non-empty executable ELF: {selected_binary}"
-        try:
-            selected_binary_sha256 = _sha256_file(selected_binary_file)
-        except OSError:
-            return None, "selected binary must be a stable regular file"
+        selected, selected_reason = _capture_binary_binding(session, selected_binary)
+        if selected is None:
+            return None, selected_reason or "selected binary must be a stable regular file"
+        expected = binary_bindings[0]
+        if (selected.mode, selected.sha256) != (expected.mode, expected.sha256):
+            return None, "selected binary changed after Host validation"
+        selected_binary_sha256 = selected.sha256
 
     source_head, builder_baseline, baseline_reason = await asyncio.to_thread(
         _measure_builder_baseline, session, cve
@@ -582,10 +1038,10 @@ async def _capture_replay_contract(
             repro_sha256=_sha256_file(tc / _REPRO_SH),
             poc_path=poc_path,
             poc_sha256=_sha256_file(poc_file),
-            binary_paths=binary_paths,
+            binary_bindings=binary_bindings,
             selected_binary=selected_binary,
             selected_binary_sha256=selected_binary_sha256,
-            binary_pointer_sha256=_sha256_file(tc / _BINARY_POINTER),
+            binary_pointer_sha256=hashlib.sha256(binary_pointer_bytes).hexdigest(),
             replay_argv=replay_argv,
             replay_stdin=replay_stdin,
             exploit_verdict_sha256=verdict_hash,
@@ -593,6 +1049,17 @@ async def _capture_replay_contract(
     except OSError:
         return None, "replay inputs must be stable regular files inside the run workspace"
     return contract, None
+
+
+def _validate_binary_binding_shape(binding: _BinaryBinding) -> str | None:
+    path = PurePosixPath(binding.path)
+    if not path.is_absolute() or ".." in path.parts or not _is_rebuildable_binary_path(binding.path):
+        return f"unsafe binary path {binding.path}"
+    if binding.mode < 0 or binding.mode > 0o7777 or not binding.mode & 0o111:
+        return f"invalid executable mode for {binding.path}"
+    if re.fullmatch(r"[0-9a-f]{64}", binding.sha256) is None:
+        return f"invalid binary digest for {binding.path}"
+    return _validate_loader_binding_shape(binding.loader)
 
 
 def _resolve_testcase_file(testcase: Path, container_path: str) -> Path | None:
@@ -642,6 +1109,112 @@ def _resolve_workspace_directory(
         if _safe_mounted_path(root, candidate, require_directory=True):
             return candidate
     return None
+
+
+def _resolve_project_library(
+    session: ProcedureSession, cve: CVEInstance, soname: str
+) -> tuple[_ResolvedProjectLibrary | None, str | None]:
+    if _SONAME_RX.fullmatch(soname) is None or PurePosixPath(soname).name != soname:
+        return None, f"reported an unsafe shared-library name: {soname!r}"
+    project_root = _resolve_workspace_directory(session, cve.work_dir)
+    if project_root is None:
+        return None, f"CVE work_dir does not resolve inside the workspace: {cve.work_dir}"
+
+    matches: list[tuple[Path, Path, str]] = []
+    visited = 0
+    walk_errors: list[OSError] = []
+    for current, directory_names, file_names in os.walk(
+        project_root,
+        topdown=True,
+        onerror=walk_errors.append,
+        followlinks=False,
+    ):
+        current_path = Path(current)
+        visited += len(directory_names) + len(file_names)
+        if visited > _LOADER_SEARCH_LIMIT:
+            return None, "project library search exceeded its bounded entry limit"
+
+        safe_directories: list[str] = []
+        for name in sorted(directory_names):
+            if name == ".git":
+                continue
+            directory = current_path / name
+            try:
+                mode = directory.lstat().st_mode
+            except OSError as exc:
+                return None, f"project library search could not inspect {name}: {exc}"
+            if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                safe_directories.append(name)
+        directory_names[:] = safe_directories
+
+        if soname not in file_names:
+            continue
+        candidate = current_path / soname
+        resolved_target, target_sha256, candidate_reason = _validate_project_library(
+            project_root,
+            candidate,
+        )
+        if candidate_reason is not None:
+            return None, f"project-local {soname} is unsafe: {candidate_reason}"
+        if resolved_target is None or target_sha256 is None:
+            raise ProcedureInfrastructureError(
+                "successful project library validation omitted its target identity"
+            )
+        matches.append((candidate, resolved_target, target_sha256))
+
+    if walk_errors:
+        return None, "project library search could not inspect every project directory"
+    if not matches:
+        return None, f"has no safe project-local {soname} beneath {cve.work_dir}"
+    if len(matches) != 1:
+        return None, f"has multiple project-local {soname} candidates beneath {cve.work_dir}"
+
+    candidate, resolved_target, target_sha256 = matches[0]
+    relative_directory = candidate.parent.relative_to(project_root)
+    container_directory = PurePosixPath(cve.work_dir).joinpath(*relative_directory.parts)
+    value = container_directory.as_posix()
+    loader_reason = _validate_loader_path(value)
+    if loader_reason is not None:
+        return None, f"resolved an unsafe project library directory: {loader_reason}"
+    candidate_relative = candidate.relative_to(project_root)
+    target_relative = resolved_target.relative_to(project_root)
+    return (
+        _ResolvedProjectLibrary(
+            soname=soname,
+            candidate_path=PurePosixPath(cve.work_dir)
+            .joinpath(*candidate_relative.parts)
+            .as_posix(),
+            resolved_target_path=PurePosixPath(cve.work_dir)
+            .joinpath(*target_relative.parts)
+            .as_posix(),
+            resolved_target_sha256=target_sha256,
+            directory=value,
+        ),
+        None,
+    )
+
+
+def _validate_project_library(
+    project_root: Path, candidate: Path
+) -> tuple[Path | None, str | None, str | None]:
+    if not _safe_mounted_path(project_root, candidate.parent, require_directory=True):
+        return None, None, "its parent path is not a stable project directory"
+    try:
+        mode = candidate.lstat().st_mode
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return None, None, "it is missing or dangling"
+    if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+        return None, None, "it is neither a regular file nor a final symlink"
+    if not _safe_mounted_path(project_root, resolved, require_directory=False):
+        return None, None, "its resolved target escapes or traverses a symlinked project path"
+    try:
+        content = _read_regular_bytes(resolved)
+    except OSError:
+        return None, None, "its resolved target is not a stable regular file"
+    if len(content) < 4 or content[:4] != b"\x7fELF":
+        return None, None, "its resolved target is not a non-empty ELF"
+    return resolved, hashlib.sha256(content).hexdigest(), None
 
 
 def _resolve_mounted_file(
@@ -724,6 +1297,53 @@ def _host_file_evidence(
     )
 
 
+def _host_library_evidence(
+    binary_path: str,
+    soname: str,
+    library_directory: str | None,
+    failure: str | None,
+) -> ProcedureEvidence:
+    output = failure or f"resolved {soname} uniquely at {library_directory}"
+    return ProcedureEvidence(
+        argv=("host-shared-library-check", binary_path, soname),
+        exit_code=1 if failure else 0,
+        output_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        excerpt=output[:_EXCERPT_LIMIT],
+    )
+
+
+def _host_marker_evidence(
+    binary_path: str,
+    marker: str,
+    termination: CommandTermination,
+) -> ProcedureEvidence:
+    output = f"sanitizer startup marker observed; termination={termination.value}"
+    return ProcedureEvidence(
+        argv=("host-sanitizer-startup-marker", binary_path),
+        exit_code=0,
+        output_sha256=hashlib.sha256(marker.encode("utf-8")).hexdigest(),
+        excerpt=output,
+    )
+
+
+def _host_baseline_evidence(
+    operation: str,
+    work_dir: str,
+    source_head: str,
+    baseline_sha256: str,
+    failure: str | None,
+) -> ProcedureEvidence:
+    output = failure or (
+        f"source_head={source_head} builder_baseline_sha256={baseline_sha256}"
+    )
+    return ProcedureEvidence(
+        argv=(operation, work_dir),
+        exit_code=1 if failure else 0,
+        output_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        excerpt=output[:_EXCERPT_LIMIT],
+    )
+
+
 def _measure_builder_baseline(
     session: ProcedureSession, cve: CVEInstance
 ) -> tuple[str, str, str | None]:
@@ -769,15 +1389,7 @@ def _measure_git_state(
         head = _git_output(worktree, "rev-parse", "HEAD").decode("ascii").strip()
         _git_output(worktree, "cat-file", "-e", f"{base_commit}^{{commit}}")
         _git_output(worktree, "merge-base", "--is-ancestor", base_commit, head)
-        worktree_diff = _git_output(
-            worktree,
-            "diff",
-            "--binary",
-            "--no-ext-diff",
-            "--no-textconv",
-            "HEAD",
-            "--",
-        )
+        worktree_diff = _measure_worktree_diff(worktree, head)
         baseline_diff = _git_output(
             worktree,
             "diff",
@@ -799,7 +1411,48 @@ def _measure_git_state(
     return head, baseline_diff, None
 
 
-def _git_output(worktree: Path, *arguments: str) -> bytes:
+def _measure_worktree_diff(worktree: Path, head: str) -> bytes:
+    """Compare HEAD to disk through a Host-owned index with no worker flags."""
+    with tempfile.TemporaryDirectory(prefix="arise-builder-index-") as directory:
+        environment = {"GIT_INDEX_FILE": str(Path(directory) / "index")}
+        configuration = (
+            "-c",
+            "core.filemode=true",
+            "-c",
+            "core.symlinks=true",
+            "-c",
+            "core.sparseCheckout=false",
+            "-c",
+            "index.sparse=false",
+            "-c",
+            "diff.ignoreSubmodules=none",
+        )
+        _git_output(
+            worktree,
+            *configuration,
+            "read-tree",
+            "--reset",
+            head,
+            environment=environment,
+        )
+        return _git_output(
+            worktree,
+            *configuration,
+            "diff-files",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=none",
+            "--",
+            environment=environment,
+        )
+
+
+def _git_output(
+    worktree: Path,
+    *arguments: str,
+    environment: dict[str, str] | None = None,
+) -> bytes:
     command = (
         "git",
         "-c",
@@ -812,7 +1465,7 @@ def _git_output(worktree: Path, *arguments: str) -> bytes:
         "core.untrackedCache=false",
         *arguments,
     )
-    env = {
+    env: dict[str, str] = {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "LC_ALL": "C",
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -821,6 +1474,8 @@ def _git_output(worktree: Path, *arguments: str) -> bytes:
         "GIT_OPTIONAL_LOCKS": "0",
         "HOME": "/nonexistent",
     }
+    if environment is not None:
+        env.update(environment)
     completed = subprocess.run(
         command,
         cwd=worktree,
@@ -890,15 +1545,20 @@ def _replay_stdin_bytes(
     return content, None
 
 
-def _replay_environment(sanitizer: str) -> tuple[tuple[str, str], ...]:
+def _replay_environment(
+    sanitizer: str, loader_path: str
+) -> tuple[tuple[str, str], ...]:
     normalized = sanitizer.strip().lower()
+    environment: list[tuple[str, str]] = []
     if normalized == "address":
-        return (("ASAN_OPTIONS", "abort_on_error=1:halt_on_error=1"),)
-    if normalized == "memory":
-        return (("MSAN_OPTIONS", "halt_on_error=1"),)
-    if normalized == "undefined":
-        return (("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1"),)
-    return ()
+        environment.append(("ASAN_OPTIONS", "abort_on_error=1:halt_on_error=1"))
+    elif normalized == "memory":
+        environment.append(("MSAN_OPTIONS", "halt_on_error=1"))
+    elif normalized == "undefined":
+        environment.append(("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1"))
+    if loader_path:
+        environment.append(("LD_LIBRARY_PATH", loader_path))
+    return tuple(environment)
 
 
 def _freeze_replay_contract(session: ProcedureSession, contract: _ReplayContract) -> None:
@@ -912,8 +1572,14 @@ async def _validate_replay_contract(
     stored, load_reason = _load_replay_contract(session)
     if stored is None:
         return None, load_reason
+    binding_reason = _revalidate_exact_replay_bindings(session, cve, stored)
+    if binding_reason is not None:
+        return None, binding_reason
     current, capture_reason = await _capture_replay_contract(
-        session, cve, include_verdict=True
+        session,
+        cve,
+        binary_bindings=stored.binary_bindings,
+        include_verdict=True,
     )
     if current is None:
         return None, capture_reason
@@ -923,6 +1589,45 @@ async def _validate_replay_contract(
     if public_identity != stored.identity:
         return None, "public exploit input identity does not match the Host-frozen identity"
     return stored, None
+
+
+def _revalidate_exact_replay_bindings(
+    session: ProcedureSession,
+    cve: CVEInstance | None,
+    stored: _ReplayContract,
+) -> str | None:
+    if cve is None:
+        return "CVE context is missing; replay target identity cannot be revalidated"
+    current, current_reason = _capture_declared_binary_set(session)
+    if current is None:
+        return current_reason
+    if hashlib.sha256(current.pointer_bytes).hexdigest() != stored.binary_pointer_sha256:
+        return "Builder binary pointer changed after exploit validation"
+    current_artifacts = tuple(
+        binding.model_copy(update={"loader": frozen.loader})
+        for binding, frozen in zip(
+            current.bindings,
+            stored.binary_bindings,
+            strict=False,
+        )
+    )
+    if len(current.bindings) != len(stored.binary_bindings) or current_artifacts != (
+        stored.binary_bindings
+    ):
+        return (
+            "protected replay target identity changed: declared binary path, mode, "
+            "or content changed after exploit validation"
+        )
+    for frozen in stored.binary_bindings:
+        current_loader, loader_reason = _refresh_loader_binding(
+            session,
+            cve,
+            frozen.loader,
+            allow_content_change=False,
+        )
+        if loader_reason is not None or current_loader != frozen.loader:
+            return loader_reason or "project library identity changed after exploit validation"
+    return None
 
 
 def _load_replay_contract(
@@ -1049,7 +1754,10 @@ async def _run_exploit_validation(
             timeout=_REPRO_TIMEOUT,
             evidence=evidence,
             stdin=replay_stdin,
-            env=_replay_environment(replay_contract.sanitizer),
+            env=_replay_environment(
+                replay_contract.sanitizer,
+                replay_contract.binary_bindings[0].loader.effective_loader_path,
+            ),
         )
         _write_run_log(tc, _REPRO_RUN_LOG.replace("$N", str(index)), outcome)
         if outcome.timed_out:
@@ -1077,13 +1785,48 @@ async def _run_exploit_validation(
     _write_exploit_verdict(tc, verdict, reason, golden, observed, determinism)
     summary = f"Exploit validation {verdict}: {reason}"
     if passed:
-        frozen = replay_contract.model_copy(
+        expected = replay_contract.model_copy(
             update={"exploit_verdict_sha256": _sha256_file(tc / _EXPLOIT_VERDICT)}
         )
-        _freeze_replay_contract(session, frozen)
+        drift_reason = _revalidate_exact_replay_bindings(session, cve, replay_contract)
+        recaptured: _ReplayContract | None = None
+        if drift_reason is None:
+            recaptured, capture_reason = await _capture_replay_contract(
+                session,
+                cve,
+                binary_bindings=replay_contract.binary_bindings,
+                include_verdict=True,
+            )
+            if recaptured is None:
+                drift_reason = capture_reason or (
+                    "protected replay inputs could not be recaptured after exploit replay"
+                )
+            elif recaptured != expected:
+                drift_reason = "protected replay inputs changed during exploit replay"
+        if drift_reason is not None:
+            _clear_replay_contract(session)
+            _write_exploit_verdict(
+                tc,
+                "FAIL",
+                drift_reason,
+                golden,
+                observed,
+                determinism,
+            )
+            return _failed(
+                _PROCEDURE_EXPLOIT,
+                f"Exploit validation FAIL: {drift_reason}",
+                drift_reason,
+                evidence,
+            )
+        if recaptured is None:
+            raise ProcedureInfrastructureError(
+                "successful exploit identity recapture omitted its contract"
+            )
+        _freeze_replay_contract(session, recaptured)
         return ProcedureResult(
             success=True,
-            summary=f"{summary}; input identity {frozen.identity}",
+            summary=f"{summary}; input identity {recaptured.identity}",
             evidence=tuple(evidence),
         )
     return _failed(_PROCEDURE_EXPLOIT, summary, reason, evidence)
@@ -1095,12 +1838,33 @@ async def _exploit_preflight(
     evidence: list[ProcedureEvidence],
 ) -> tuple[_ReplayContract | None, str | None]:
     """Return the replay contract and no reason, or a fail-closed reason."""
-    replay_contract, contract_reason = await _capture_replay_contract(session, cve)
-    if replay_contract is None:
-        return None, contract_reason
-    binary_reason = await _validate_declared_binaries(session, cve, evidence)
+    declared, declared_reason = _capture_declared_binary_set(session)
+    if declared is None:
+        return None, declared_reason
+    provisional, provisional_reason = await _capture_replay_contract(
+        session,
+        cve,
+        binary_bindings=declared.bindings,
+    )
+    if provisional is None:
+        return None, provisional_reason
+
+    binary_bindings, binary_reason = await _validate_declared_binaries(session, cve, evidence)
     if binary_reason is not None:
         return None, binary_reason
+    if binary_bindings is None:
+        raise ProcedureInfrastructureError("successful binary validation omitted bindings")
+    replay_contract, contract_reason = await _capture_replay_contract(
+        session,
+        cve,
+        binary_bindings=binary_bindings,
+    )
+    if replay_contract is None:
+        return None, contract_reason
+    if replay_contract != provisional.model_copy(
+        update={"binary_bindings": binary_bindings}
+    ):
+        return None, "protected replay inputs changed during the sanitizer startup probe"
     return replay_contract, None
 
 
@@ -1211,7 +1975,7 @@ async def _run_patch_validation(
         _reset_recheck_build_state(
             session,
             cve,
-            replay_contract.binary_paths,
+            tuple(binding.path for binding in replay_contract.binary_bindings),
         )
         if is_recheck
         else None
@@ -1269,7 +2033,13 @@ async def _run_patch_validation(
         )
         return _failed(_PROCEDURE_PATCH, f"Patch validation FAIL: {reason}", reason, evidence)
 
-    binary_reason = await _validate_declared_binaries(session, cve, evidence)
+    _rebuilt_bindings, binary_reason = await _validate_declared_binaries(
+        session,
+        cve,
+        evidence,
+        frozen_bindings=replay_contract.binary_bindings,
+        frozen_pointer_sha256=replay_contract.binary_pointer_sha256,
+    )
     if binary_reason is not None:
         _write_sentinel(tc / _FIX_LOOP_EXIT)
         reason = f"post-patch binary validation failed: {binary_reason}"
@@ -1318,6 +2088,7 @@ async def _prepare_patch_recheck(
     current_contract, capture_reason = await _capture_replay_contract(
         session,
         cve,
+        binary_bindings=stored.binary_bindings,
         include_verdict=True,
         frozen_binary_sha256=stored.selected_binary_sha256,
     )
@@ -1412,7 +2183,10 @@ async def _patch_repro_loop(
             timeout=_REPRO_TIMEOUT,
             evidence=evidence,
             stdin=replay_stdin,
-            env=_replay_environment(replay_contract.sanitizer),
+            env=_replay_environment(
+                replay_contract.sanitizer,
+                replay_contract.binary_bindings[0].loader.effective_loader_path,
+            ),
         )
         _write_run_log(tc, _FIX_RUN_LOG.replace("$N", str(index)), outcome)
         if outcome.timed_out:
@@ -1571,11 +2345,14 @@ async def _run_cmd(
 
 def _evidence_for(argv: tuple[str, ...], outcome: CommandOutcome) -> ProcedureEvidence:
     digest = hashlib.sha256(outcome.output.encode("utf-8", "replace")).hexdigest()
+    evidence_output = outcome.output
+    if outcome.termination is not CommandTermination.COMPLETED:
+        evidence_output = f"termination={outcome.termination.value}\n{evidence_output}"
     return ProcedureEvidence(
         argv=argv,
         exit_code=outcome.exit_code,
         output_sha256=digest,
-        excerpt=_tail(outcome.output, _EXCERPT_LIMIT),
+        excerpt=_head_tail(evidence_output, _EXCERPT_LIMIT),
     )
 
 
@@ -1754,10 +2531,6 @@ def _nonempty_lines(text: str) -> list[str]:
 
 def _join(parts: list[str]) -> str:
     return "\n".join(parts) + "\n"
-
-
-def _tail(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[-limit:]
 
 
 def _head_tail(text: str, limit: int) -> str:

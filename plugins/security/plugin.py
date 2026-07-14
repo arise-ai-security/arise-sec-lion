@@ -19,7 +19,7 @@ from plugins.security.cve_instance import CVEInstance
 from plugins.security.decomposition_validator import SecBenchDecompositionValidator
 from plugins.security.docker_runtime import DockerProcedureSession
 from plugins.security.image_resolver import resolve_secbench_image
-from plugins.security.procedures import SecBenchProcedureExecutor
+from plugins.security.procedures import ProcedureInfrastructureError, SecBenchProcedureExecutor
 from plugins.security.prompt_strategy import SecBenchPromptStrategy
 
 
@@ -70,6 +70,7 @@ class SecurityDomainPlugin(DomainPlugin):
         self._inference_service = CVEInstanceInferenceService()
         self._workspaces: dict[UUID, SecBenchWorkspace] = {}
         self._sessions: dict[UUID, SecBenchContainerSession] = {}
+        self._procedure_sessions: dict[UUID, DockerProcedureSession] = {}
         # Audit §13#9: per-root asyncio.Lock around the
         # `_sessions[root_id]` check-and-set in prepare_worker_execution.
         # With the orchestrator's default `max_concurrent_workers=1` the
@@ -102,7 +103,27 @@ class SecurityDomainPlugin(DomainPlugin):
         session = self._sessions.get(root_id)
         if session is None:
             return None
-        return DockerProcedureSession(session)
+        procedure_session = self._procedure_sessions.get(root_id)
+        if procedure_session is None:
+            procedure_session = DockerProcedureSession(
+                session,
+                on_removed=lambda: self._invalidate_removed_session(root_id, session),
+            )
+            self._procedure_sessions[root_id] = procedure_session
+        return procedure_session
+
+    async def _invalidate_removed_session(
+        self,
+        root_id: UUID,
+        session: SecBenchContainerSession,
+    ) -> None:
+        """Drop a container only after the runtime confirms its removal."""
+        lock = self._session_locks.setdefault(root_id, asyncio.Lock())
+        async with lock:
+            if self._sessions.get(root_id) is not session:
+                return
+            self._sessions.pop(root_id, None)
+            self._procedure_sessions.pop(root_id, None)
 
     def infer_context(self, task_text: str, **kwargs: object) -> object | None:
         cve_file = kwargs.get("context_file") or kwargs.get("cve_file")
@@ -210,6 +231,11 @@ class SecurityDomainPlugin(DomainPlugin):
         async with lock:
             existing = self._sessions.get(root_id)
             if existing is not None:
+                procedure_session = self._procedure_sessions.get(root_id)
+                if procedure_session is not None and not procedure_session.usable:
+                    raise ProcedureInfrastructureError(
+                        "procedure container is blocked because removal was not confirmed"
+                    )
                 session = existing  # reuse the run's one shared container
             else:
                 session = await self._container_runtime.start_session(
@@ -218,6 +244,7 @@ class SecurityDomainPlugin(DomainPlugin):
                     agent_id=agent_id,
                 )
                 self._sessions[root_id] = session
+                self._procedure_sessions.pop(root_id, None)
 
         return WorkerExecutionContext(
             working_directory=str(workspace.host_root),
