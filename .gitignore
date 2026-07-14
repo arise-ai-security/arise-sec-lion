@@ -723,3 +723,9 @@ data/
 # SEC-bench run artifacts (anchored to root to avoid matching query/web/src/)
 /src/
 /testcase/
+
+# Local experiment outputs
+/_run_logs/
+/experiments/*/reports/
+/B4_vs_N1_progress_report_2026-06-09_to_06-18.docx
+/SEC_bench_experiment_status_2026-07-13.docx
