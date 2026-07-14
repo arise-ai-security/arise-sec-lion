@@ -1,0 +1,11 @@
+study_id: n1-secbench-full
+created_at: 2026-07-14T00:00:00+00:00
+hypothesis: >
+  Development N1 scalability run over the complete SEC-bench eval split.
+  This is an operational study, not a confirmatory N1-versus-B4 comparison.
+dataset: dataset.yaml
+replicates: 1
+cells:
+  N1: {group: N, runner: arise, config: configs/N1-openhands-linear.yaml}
+headline_cells: [N1]
+

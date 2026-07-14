@@ -1,0 +1,20 @@
+# N1 — one flat OpenHands session with subagents disabled.
+extends: config/config.yaml
+
+overrides:
+  orchestration.mode: flat
+  orchestration.skip_judge: true
+  orchestration.max_run_duration_seconds: 14400
+  orchestration.concurrency.max_agent_step_seconds: 3600
+  boss.model: claude-sonnet-4-6
+  manager.model: claude-sonnet-4-6
+  worker.tool: openhands
+  worker.model: gpt-5.3-codex
+  worker.allowed_tools: [file_editor, glob, grep]
+  worker.tool_params.openhands.mcp_tools: [shell_in_container, valgrind_run, klee_run]
+  worker.tool_params.openhands.mcp_tool_timeout_seconds: 600
+  worker.tool_params.openhands.enable_subagents: false
+  worker.timeout: 3600
+  worker.max_iterations_per_run: 250
+  output.directory: ./runs
+
