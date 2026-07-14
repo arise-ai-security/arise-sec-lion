@@ -11,7 +11,9 @@ Build from Build-Setup's verified baseline. Do not perform Build-Verifier's inde
 5. Resolve every produced executable to its non-empty ELF under `/src` or `/work` and write
    those build-output paths to `{{ artifact_paths.binary_paths }}`. Do not copy or declare a
    `/testcase` snapshot: Patch-Validator must rebuild and execute the same declared path.
-6. Record only build/setup changes in `{{ artifact_paths.repo_changes_diff }}` and establish the
-   local `arise-builder-baseline` commit without `git add -A`.
+6. Record `{{ artifact_paths.repo_changes_diff }}` as the exact `git diff --no-color` output
+   against the supplied base commit from inside `{{ work_dir }}`, then establish the local
+   `arise-builder-baseline` commit without `git add -A`. `{{ artifact_paths.build_script }}` is
+   a separate external build-recipe artifact; never synthesize it into the repository diff.
 7. Print the build exit, binary paths, build script, and repository diff verbatim.
 </domain_instructions>

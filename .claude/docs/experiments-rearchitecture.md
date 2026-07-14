@@ -98,10 +98,21 @@ PoC, then the final `exec "$BIN"` may contain inert literal arguments and exactl
 `$POC`, or the sole supported stdin redirection. OpenEXR's
 `exec "$BIN" -v "$POC" /dev/null` and FAAD2's
 `exec "$BIN" "$POC" -o /dev/null` are valid; shell control, substitution, wrappers,
-pipes, setup, and other redirection are not. The Host freezes source/Builder state,
-selected-binary digest, PoC, resolved argv/stdin mode, exploit verdict, plan, and patch
-identity. Procedure commands use direct argv, a fixed launch environment, and an
-in-container timeout; timeout recovery restarts the shared container. Pre-patch success
+pipes, setup, and other redirection are not. The Host validates `repo_changes.diff` as
+the byte-exact repository delta under the CVE work directory at the Builder producer
+boundary; the external `/src/build.sh` recipe is a separate artifact and is never
+synthesized into that diff. It freezes source/Builder state, every declared binary's
+path/mode/digest, PoC, resolved argv/stdin mode, and any required project-local library's
+SONAME, candidate, resolved target, target digest, and effective loader path, plus the
+exploit verdict, plan, and patch identity. Procedure commands use
+direct argv and a fixed launch environment; Host-owned deadlines guard only
+external-process liveness, not predicate evaluation. A declared-binary startup probe streams
+output; when the exact configured sanitizer marker appears, the Host stops the probe and
+resets the container immediately, recording `STOPPED_AFTER_MARKER` rather than
+`TIMED_OUT`. Reaching the deadline without that marker is a failure. Every startup-probe
+outcome resets the container so detached descendants cannot survive. Every build, patch,
+exploit-replay, and post-patch-replay timeout remains fatal and triggers container
+recovery. Pre-patch success
 requires complete oracle-matching signatures and consistent termination across 3/3, not
 a nonzero exit. Post-patch clean replay accepts only exit 0 or the frozen dataset exit
 oracle and rejects any sanitizer evidence.

@@ -603,8 +603,8 @@ mandatory only when the phase is decomposed; **EVIDENCE** = path constant exists
 | Artifact (`/testcase/…` unless noted) | Producer | Status | Mechanical meaning |
 |---|---|---|---|
 | `base_commit_hash` | Build-Setup | REQUIRED | The vulnerable commit hash |
-| `/src/build.sh` | Build-Executor | REQUIRED | Project build recipe (sanitizer flags preserved) |
-| `repo_changes.diff` | Build-Executor | REQUIRED · **MAY_BE_EMPTY** | Builder source delta vs base; committed as `arise-builder-baseline` when non-empty |
+| `/src/build.sh` | Build-Executor | REQUIRED | External project build recipe (sanitizer flags preserved); never synthesized into `repo_changes.diff` |
+| `repo_changes.diff` | Build-Executor | REQUIRED · **MAY_BE_EMPTY** | Byte-exact `git diff --no-color` under `CVEInstance.work_dir` vs base; validated by Build-Verifier and committed as `arise-builder-baseline` when non-empty |
 | `binary_paths.txt` | Build-Executor | REQUIRED | Exact Builder-produced executable path(s), one per line |
 | `poc_path.txt` | Repro-Creator | REQUIRED | Pointer to the selected PoC (by content/CVE match, **not** a `poc*` glob) |
 | `repro.sh` | Repro-Creator | REQUIRED | The `secb repro` backing script; invokes the Builder binary |
@@ -960,20 +960,36 @@ Examples are OpenEXR `exec "$BIN" -v "$POC" /dev/null` and FAAD2
 operators, wrappers, pipes, setup commands, and other redirections fail closed. The Host
 resolves and directly executes the argv vector or supplies the frozen PoC bytes on stdin.
 
-Before exploit validation, a sealed replay contract binds the CVE/base/sanitizer/work
-directory, dataset exit oracle, source HEAD, Builder-baseline digest (`build.sh`,
-`repo_changes.diff`, and tracked state), reproducer, PoC/pointer, selected binary and
-digest, resolved argv/stdin mode, and verdict. Patch approval additionally seals the plan,
-rendered diff, and replay identity. Symlinked or changed inputs fail closed.
+Build-Verifier recomputes the repository state under `CVEInstance.work_dir` and requires
+its byte-exact `git diff --no-color` output to equal `repo_changes.diff` at the Builder
+producer boundary. The external `/src/build.sh` recipe remains a separate artifact and is
+never synthesized into that repository delta. Before exploit validation, a sealed replay
+contract binds the CVE/base/sanitizer/work directory, dataset exit oracle, source HEAD,
+Builder-baseline digest (`build.sh`, `repo_changes.diff`, and tracked state measured through
+a Host-owned index), reproducer, PoC/pointer bytes, every declared binary's path/mode/digest,
+resolved argv/stdin mode, and any required project-local library's SONAME, candidate,
+resolved target, target digest, and effective loader path. After all three exploit runs, the
+Host revalidates and recaptures the complete identity before sealing it with the verdict
+hash. Patch approval additionally seals the plan, rendered diff, and replay identity.
+Symlinked or changed inputs fail closed.
 
 Procedure execution never uses `bash -lc`. It preserves the image's OSS-Fuzz variables,
 fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`, and adds
-sanitizer-specific halt options for direct replay. An in-container GNU `timeout` sends
-TERM then KILL; exit 124 or the outer watchdog restarts the shared container before
-returning a task-level timeout. Restart failure is an infrastructure error. Build
-verification requires exit 0, executable ELF targets, and the configured sanitizer
-runtime. Exploit validation requires complete 3/3 oracle-matching signatures and
-consistent termination; complete sanitizer evidence may legitimately accompany exit 0,
+sanitizer-specific halt options for direct replay. When a direct ELF reports a canonical
+missing shared-library SONAME, the Host may resolve one unique safe candidate below the
+CVE work directory and freeze its concrete directory into the replay environment;
+missing, ambiguous, or path-escaping candidates fail closed. A declared-binary startup
+probe streams output under a Host-owned liveness deadline; the deadline guards the
+external process, not the in-memory predicate. When the exact configured sanitizer marker
+appears, the Host stops the probe and resets the shared container immediately, returning
+`STOPPED_AFTER_MARKER`; this is distinct from `TIMED_OUT`. Reaching the deadline without
+the marker returns `TIMED_OUT` and fails. Every startup-probe outcome resets the container
+so detached descendants cannot survive. Every ordinary build, patch, exploit-replay, and
+post-patch-replay timeout remains fatal and triggers container recovery. Reset failure is
+an infrastructure error. Build verification otherwise requires `secb build`
+to exit 0, executable ELF targets, and the configured sanitizer runtime. Exploit validation
+requires complete 3/3 oracle-matching signatures and consistent termination; complete
+sanitizer evidence may legitimately accompany exit 0,
 including recoverable UBSan. Post-patch replay rejects timeouts, signals, assertions, sanitizer findings,
 unsanitized crashes, and exits outside `{0, frozen dataset exit oracle}`.
 
