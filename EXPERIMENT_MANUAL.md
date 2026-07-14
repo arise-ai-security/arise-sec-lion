@@ -2,6 +2,9 @@
 
 How to run a comparative **A/B/C experiment** on SEC-bench. Assumes the study folder (`experiments/<study-id>/`) already exists with `manifest.yaml`, `dataset.yaml`, and `configs/*.yaml` in place.
 
+For the 300-task N1 run, use the three-command
+[`experiments/n1-secbench-full` runbook](experiments/n1-secbench-full/README.md).
+
 ---
 
 ## 1. Vocabulary
