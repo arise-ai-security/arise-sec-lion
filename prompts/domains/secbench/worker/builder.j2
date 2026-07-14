@@ -3,14 +3,13 @@
 
 Refer to Task Context above for repository location, base commit hash, and vulnerability details.
 
+{% include 'domains/secbench/phases/build.j2' %}
 {# The included phase partial (phases/build.j2) is the shared "phase contract":
    its Goal + deliverables render identically for every Builder worker and the
    flat arm, so it sits in the common cacheable prefix (run-scoped shard for
    OpenHands; cache_control for Anthropic via LiteLLM). Keep text above this
    include stable across workers to preserve that prefix.
-#}
-
-{% include 'domains/secbench/phases/build.j2' %}
+    #}
 
 ### Setup
 
@@ -21,9 +20,9 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
 
 ### Steps
 
-1. **Determine base commit** from vulnerability description (Task Context):
-   - If a more suitable commit exists: save to `{{ artifact_paths.base_commit_hash }}`, run `git reset --hard <hash>`
-   - Otherwise: save the provided base commit to `{{ artifact_paths.base_commit_hash }}`
+1. **Use the exact supplied base commit** from Task Context:
+   - Save that exact commit to `{{ artifact_paths.base_commit_hash }}` and reset the repository to it when needed
+   - Never substitute a different commit; the Host binds all later evidence to the supplied baseline
    - `{{ artifact_paths.base_commit_hash }}` MUST exist before proceeding
 
 2. **Build the project**: `cd {{ work_dir }} && secb build`
@@ -59,7 +58,7 @@ apt-get install -y cppcheck gdb 2>/dev/null || true
    - Define suppression flags before `./configure` or `cmake`
    - Make MINIMAL source changes if needed
 
-7. **Declare executable paths — ONLY after a clean build**: Confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`. If it does not, the current build did NOT succeed — read `build.log`, fix the compile error, and re-run `secb build` until `build.exit` reports `exit=0`. Do NOT declare a pre-existing or stale binary from an earlier failed attempt. Then write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line, each produced by THIS successful build. To survive any later baseline reset, also copy each declared executable (resolving libtool wrapper scripts to the real ELF under `.libs/`) into `{{ artifact_dirs.testcase }}/bin/` and declare that durable copy: `mkdir -p {{ artifact_dirs.testcase }}/bin && cp <real-binary> {{ artifact_dirs.testcase }}/bin/<name>`
+7. **Declare executable paths — ONLY after a clean build**: Confirm `cat {{ artifact_dirs.testcase }}/build.exit` reads `exit=0`. If it does not, the current build did NOT succeed — read `build.log`, fix the compile error, and re-run `secb build` until `build.exit` reports `exit=0`. Do NOT declare a pre-existing or stale binary from an earlier failed attempt. Then write `{{ artifact_paths.binary_paths }}` with one absolute Builder-produced executable path per line, each produced by THIS successful build. Resolve libtool wrapper scripts to the real ELF under `.libs/`. Declare only build-output paths under `/src` or `/work`; do not copy or declare a `/testcase` snapshot because Patch-Validator must rebuild and execute the same declared path.
 
 8. **Save source changes and establish the Builder baseline**: Follow the
    Builder Baseline procedure in the phase contract above. It records

@@ -84,6 +84,23 @@ class TestInfrastructureWiring:
 
         assert getattr(infra.worker_tool, "max_iterations_per_run", None) == 7
 
+    def test_passes_openhands_model_overrides_into_adapter(self) -> None:
+        """OpenHands adapter should receive task-prefix model routing."""
+
+        # Given: a reasoning-role model override
+        overrides = {"[Analysis]": "gpt-5.3-codex"}
+
+        # When
+        infra = get_infrastructure(
+            make_infra_config(
+                default_worker_tool="openhands",
+                worker_model_overrides=overrides,
+            )
+        )
+
+        # Then
+        assert getattr(infra.worker_tool, "_model_overrides", None) == overrides
+
     def test_config_requires_all_fields(self) -> None:
         """Test that InfrastructureConfig validates required fields."""
         with pytest.raises(TypeError, match=r"missing.*required"):

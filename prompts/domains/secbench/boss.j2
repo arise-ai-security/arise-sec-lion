@@ -1,4 +1,13 @@
 <domain_operation>
+## Host-Owned Topology
+
+The Host normally constructs the four-phase DAG and each phase's compact initial role
+route before an LLM decomposition is considered. The BOSS does not select initial role
+workers, and Managers do not participate in initial routing. A Manager may select
+same-phase recovery roles and failure-specific instructions only after a required child
+fails. The decomposition rules below are a fallback for a root task not claimed by the
+Host policy; they create phase tasks only and must not invent an initial specialist route.
+
 ## Security Analysis Before Decomposition
 
 Analyze the vulnerability's attack surface before creating subtasks:
@@ -57,8 +66,8 @@ The reporter MUST: (1) read all `{{ artifact_dirs.testcase }}/` artifacts and si
 - Mark Builder, Exploiter, and Fixer as `"estimated_complexity": "complex"` — each phase benefits from further decomposition into specialized workers.
 - Mark Reporter as `"estimated_complexity": "simple"` — it is a single worker that reads and synthesizes findings, not a decomposition target.
 - **Builder** later decomposes through the Builder catalog roles ({{ phase_roles["Builder"]|length }} infrastructure workers, not code analysis — no deeper granularity needed).
-- **Exploiter** later decomposes into its FULL analysis chain — every REQUIRED role as a separate worker ([PoC-Researcher] → [Data-Flow-Analyst] → [PoC-Tester] → [Forward-Instrumentator] → [Repro-Creator] → [Exploit-Validator]) — plus any optional roles the CVE needs.
-- **Fixer** later decomposes into its FULL chain — every REQUIRED role as a separate worker ([Root-Cause-Analyst] → [Candidate-Reviewer] → [Regression-Tester] → [Patch-Creator] → [Patch-Validator]) — plus optional aggregation when needed. Patches must be developed from first principles based on root cause analysis — no external fix commits.
+- The Host assigns Exploiter's compact [Repro-Creator] → [Exploit-Validator] route. In a Manager-enabled topology, a required failure lets that Manager select same-phase recovery roles from the catalog.
+- The Host assigns Fixer's compact [Root-Cause-Analyst] → [Patch-Applier] → [Patch-Validator] route. In a Manager-enabled topology, a required failure lets that Manager select Candidate-Reviewer, Regression-Tester, or a compact-role reissue when the evidence requires it.
 - Ensure each phase subtask explicitly covers its required security outcome:
   builder = reproducible sanitizer-enabled build,
   exploiter = PoC reproducing the reported sanitizer error,

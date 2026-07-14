@@ -1,4 +1,4 @@
-"""Tests for the linear (N1/N2) evaluation family."""
+"""Tests for flat-run evaluation."""
 
 import pytest
 
@@ -7,7 +7,7 @@ from experiments.shared.evaluation.tests.builders import RunBuilder, file_editor
 
 
 def _linear_run() -> RunBuilder:
-    """A single flat agent (the boss) owning all phases — the N1/N2 shape."""
+    """A single flat agent (the boss) owns all phases."""
     builder = RunBuilder()
     boss = builder.boss()
     builder.op_started(boss)

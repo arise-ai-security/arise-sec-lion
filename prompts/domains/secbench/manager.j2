@@ -1,4 +1,65 @@
 <domain_guidance>
+## Phase role routing
+
+Determine the current phase from the leading `[Builder]`, `[Exploiter]`, `[Fixer]`,
+or `[Reporter]` label in `<task>`.
+
+### Adaptive re-decomposition
+
+This prompt is used only after an initial phase attempt fails. The host creates the
+initial compact route without an LLM turn. You own the adaptive recovery decision:
+reason from the full failure reason and digest in the volatile tail. The host validates
+and enforces your route against the trusted catalog, dependencies, completed work, and
+live hierarchy limits. It canonicalizes accepted role labels, binds them as required
+atomic leaves, attaches traceable failure evidence, and selects the configured
+prompt/model/procedure; it does not interpret failure semantics or choose recovery roles.
+
+### Your job
+1. Read the complete failure reason and digest in the uncached failure-history tail.
+2. Identify the concrete unresolved capability (what still cannot be done).
+3. Select only **same-phase** roles from the catalogs below.
+4. Put exact failure/artifact references in each child's `evidence_references`.
+5. Give every selected role materially revised instructions tied to that evidence.
+6. Reuse completed artifacts by default. Reissue a completed role only when the failure
+   evidence shows that role's owned artifact or capability requires correction.
+7. Include required hard-dependency producers when their outputs are not already valid.
+8. Produce detailed, executable worker instructions, success criteria, and scope.
+9. Do not select a model, system prompt, procedure implementation, or untrusted role.
+   The host binds the trusted role template, configured model, and registered procedure.
+
+Select the minimum number of legal roles needed for the unresolved capability, including
+one role when one is sufficient. This domain rule overrides all generic minimum-subtask
+guidance elsewhere in the prompt. Reporter recovery may contain exactly one `[Reporter]`
+leaf; never duplicate it or return `constraints_unsatisfiable` only to satisfy a generic
+subtask-count recommendation.
+
+### Stable phase catalogs
+
+{% for catalog in phase_catalogs %}
+#### {{ catalog.phase }}
+Compact roles:
+{% for role in catalog.compact_roles %}
+- **{{ role.name }}** — {{ role.summary }}{% if role.depends_on %} (depends_on: {{ role.depends_on | join(', ') }}){% endif %}
+{% endfor %}
+Adaptive specialists:
+{% if catalog.adaptive_specialists %}
+{% for role in catalog.adaptive_specialists %}
+- **{{ role.name }}** — {{ role.summary }}{% if role.depends_on %} (depends_on: {{ role.depends_on | join(', ') }}){% endif %}
+  {% if role.insight %}Insight seed: {{ role.insight }}{% endif %}
+{% endfor %}
+{% else %}
+- None. Reissue the failed compact role with revised instructions when needed.
+{% endif %}
+{% endfor %}
+
+Failed role labels appear in the uncached failure-history tail as
+bracketed subtask names — extract them from those records; do not invent roles
+outside the catalogs above.
+
+Each child description MUST start with exactly one bracketed role label from the
+current phase's catalog, e.g. `[PoC-Researcher] …`. One role per leaf — never merge roles.
+The prose after the label is the revised task instruction injected into that role's
+trusted prompt; make it failure-specific rather than repeating the catalog summary.
 ## Security Tool Research
 
 Before decomposing, research which security tools would be most effective for each subtask.

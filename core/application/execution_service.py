@@ -91,6 +91,8 @@ class ServiceConfig:
     # Verification-failure retries per worker; each retry re-runs a full
     # worker conversation, so this directly multiplies failing-worker cost.
     verification_max_retries: int = 2
+    treatment_version: str | None = None
+    config_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,9 +269,12 @@ class AgentExecutionService:
 
         boss_agent = self._create_boss_session(root_id, task_description)
         domain_metadata = self._get_run_metadata(domain_context)
+        config = getattr(self, "_config", None)
         boss_agent.emit_run_started(
             task_description=task_description,
             domain_metadata=domain_metadata,
+            treatment_version=getattr(config, "treatment_version", None),
+            config_hash=getattr(config, "config_hash", None),
         )
         if prepared is not None and prepared.sealed_surface is not None:
             boss_agent.emit_runtime_surface_sealed(
@@ -308,6 +313,10 @@ class AgentExecutionService:
             try:
                 agent = await self._load_agent_with_context(agent_id)
                 last_agent = agent
+
+                if agent.pending_post_step_terminal_event_id is not None:
+                    await self._handle_post_step(agent, [])
+                    return
 
                 await self._dispatch_agent_action(agent)
                 uncommitted = await self._persist_agent_events(agent)
@@ -898,7 +907,11 @@ class AgentExecutionService:
 
     async def _dispatch_agent_action(self, agent: AgentSession) -> None:
         """Dispatch based on role."""
-        if agent.status != AgentStatus.ANALYZING:
+        can_resume_worker = (
+            agent.role == AgentRole.WORKER
+            and agent.status == AgentStatus.IN_PROGRESS
+        )
+        if agent.status != AgentStatus.ANALYZING and not can_resume_worker:
             return
 
         handler = self._role_handlers.get(agent.role)

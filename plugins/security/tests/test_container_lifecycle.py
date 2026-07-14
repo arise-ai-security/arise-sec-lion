@@ -11,7 +11,9 @@ from plugins.security.container_runtime import (
     SecBenchWorkspace,
 )
 from plugins.security.cve_instance import CVEInstance
+from plugins.security.docker_runtime import DockerProcedureSession
 from plugins.security.plugin import SecurityDomainPlugin
+from plugins.security.procedures import ProcedureInfrastructureError
 
 
 def _sample_cve() -> CVEInstance:
@@ -178,6 +180,86 @@ async def test_run_workers_share_one_container_by_default(
     assert ctx1 is not None and ctx2 is not None
     assert ctx1.task_context["container_session"]["container_id"] == "shared0container"
     assert ctx2.task_context["container_session"]["container_id"] == "shared0container"
+
+    # The cached adapter owns the lock that serializes Host commands in this container.
+    first_procedure_session = plugin._resolve_procedure_session(root_id)
+    second_procedure_session = plugin._resolve_procedure_session(root_id)
+    assert first_procedure_session is not None
+    assert first_procedure_session is second_procedure_session
+
+
+@pytest.mark.asyncio
+async def test_blocked_procedure_session_is_replaced_only_after_confirmed_removal(
+    tmp_path: Path,
+) -> None:
+    root_id = uuid4()
+    cve = _sample_cve()
+    workspace = SecBenchWorkspace(
+        root_id=root_id,
+        image="secb-tools:demo.cve-2024-0001",
+        host_root=tmp_path,
+        host_source_dir=tmp_path / "src",
+        host_testcase_dir=tmp_path / "testcase",
+        host_work_dir=tmp_path / "src" / "demo",
+        container_source_dir="/src",
+        container_testcase_dir="/testcase",
+        container_working_directory="/src/demo",
+        helper_script=tmp_path / "secb-exec",
+    )
+    first_session = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="first0000001",
+        container_name="secbench-worker-first",
+        image=workspace.image,
+    )
+    replacement_session = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="second000001",
+        container_name="secbench-worker-second",
+        image=workspace.image,
+    )
+    runtime = AsyncMock()
+    runtime.prepare_workspace.return_value = workspace
+    runtime.start_session.side_effect = [first_session, replacement_session]
+    plugin = SecurityDomainPlugin(container_runtime=runtime)
+    await plugin.prepare_run(root_id=root_id, run_output_path=tmp_path, domain_context=cve)
+
+    await plugin.prepare_worker_execution(
+        root_id=root_id,
+        agent_id=uuid4(),
+        run_output_path=tmp_path,
+        domain_context=cve,
+    )
+    poisoned = plugin._resolve_procedure_session(root_id)
+    assert isinstance(poisoned, DockerProcedureSession)
+
+    poisoned._usable = False
+
+    with pytest.raises(ProcedureInfrastructureError, match="removal was not confirmed"):
+        await plugin.prepare_worker_execution(
+            root_id=root_id,
+            agent_id=uuid4(),
+            run_output_path=tmp_path,
+            domain_context=cve,
+        )
+    assert runtime.start_session.await_count == 1
+    assert plugin._resolve_procedure_session(root_id) is poisoned
+
+    await poisoned._confirm_removed()
+
+    assert plugin._resolve_procedure_session(root_id) is None
+    fallback = await plugin.prepare_worker_execution(
+        root_id=root_id,
+        agent_id=uuid4(),
+        run_output_path=tmp_path,
+        domain_context=cve,
+    )
+    assert fallback is not None
+    assert fallback.task_context["container_session"]["container_id"] == "second000001"
+    assert runtime.start_session.await_count == 2
+    replacement = plugin._resolve_procedure_session(root_id)
+    assert isinstance(replacement, DockerProcedureSession)
+    assert replacement is not poisoned
 
 
 @pytest.mark.asyncio

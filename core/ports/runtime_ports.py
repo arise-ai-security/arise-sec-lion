@@ -55,8 +55,8 @@ class LLMPort(Protocol):
 # Output Format Repairer (LLM-backed fallback for malformed model output)
 # =============================================================================
 #
-# NOTE: Distinct from the security-domain "Fixer" agent role. This port
-# repairs the *output format* of LLM responses — never source code.
+# This port repairs the output format of LLM responses; it does not execute
+# domain tasks.
 
 
 class FormatRepairerPort(Protocol):

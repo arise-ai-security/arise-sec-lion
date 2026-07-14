@@ -1,13 +1,9 @@
-"""Public evaluation API for linear runs (N1, N2).
+"""Public evaluation API for flat runs.
 
-N1/N2 run one flat agent that owns all four BEF phases, so there are no per-phase
+A flat run has one agent that owns all four BEF phases, so there are no per-phase
 agents: the "by subtree" metrics collapse to a single ``linear`` bucket. The
 shared metrics (cost, prompts, tool/category/node counts, cache) reuse the same
 pure concern functions as the BEF family.
-
-Caveat: N2's OpenHands native subagents run inside the SDK session and emit no
-domain events, so their tool calls and cost are invisible here — these functions
-report only the top-level flat agent's recorded activity.
 """
 
 from __future__ import annotations
@@ -61,7 +57,7 @@ def _cache_rate_linear(run_data: RunData) -> RateBreakdown:
 def _artifacts_linear(run_data: RunData) -> ArtifactsBySubtree:
     """Non-vacuous testcase deliverables on disk, attributed to the single agent.
 
-    Flat (N1/N2) runs do not emit ``SourceFileEdited`` events, so per-file
+    Flat runs do not emit ``SourceFileEdited`` events, so per-file
     provenance is unavailable. Since one agent owns the whole run, we list the
     on-disk ``testcase/`` deliverables (excluding vacuous files) as its artifacts.
     """
@@ -110,7 +106,7 @@ def _success_linear(run_data: RunData) -> dict[str, dict[str, Any]]:
 
 @dataclass(frozen=True, slots=True)
 class LinearRunEvaluator:
-    """All linear (N1/N2) metrics for one loaded run (load once, call many)."""
+    """All metrics for one loaded flat run (load once, call many)."""
 
     run_data: RunData
 

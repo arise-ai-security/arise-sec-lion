@@ -72,11 +72,14 @@ _VALIDATION_REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 _MAY_BE_EMPTY: frozenset[str] = frozenset({"/testcase/repo_changes.diff"})
-_HIERARCHICAL_ROLE_SPECIFIC_FIXER: tuple[str, ...] = ("/testcase/root_cause_analysis.txt",)
+_HIERARCHICAL_ROLE_SPECIFIC_FIXER: tuple[str, ...] = (
+    "/testcase/root_cause_analysis.txt",
+    "/testcase/patch_plan.json",
+)
 
 _ROLE_PHASE: dict[str, BefPhase] = {
     "Build-Setup": BefPhase.BUILDER,
-    "Build-Compiler": BefPhase.BUILDER,
+    "Build-Executor": BefPhase.BUILDER,
     "Build-Verifier": BefPhase.BUILDER,
     "PoC-Researcher": BefPhase.EXPLOITER,
     "Data-Flow-Analyst": BefPhase.EXPLOITER,
@@ -87,20 +90,20 @@ _ROLE_PHASE: dict[str, BefPhase] = {
     "Root-Cause-Analyst": BefPhase.FIXER,
     "Candidate-Reviewer": BefPhase.FIXER,
     "Regression-Tester": BefPhase.FIXER,
-    "Patch-Creator": BefPhase.FIXER,
+    "Patch-Applier": BefPhase.FIXER,
     "Patch-Validator": BefPhase.FIXER,
     "Fix-Aggregator": BefPhase.FIXER,
     "Reporter": BefPhase.REPORTER,
 }
 
 _ROLE_DEPENDS_ON: dict[str, tuple[str, ...]] = {
-    "Build-Compiler": ("Build-Setup",),
-    "Build-Verifier": ("Build-Compiler",),
+    "Build-Executor": ("Build-Setup",),
+    "Build-Verifier": ("Build-Executor",),
     "Forward-Instrumentator": ("PoC-Researcher",),
     "Exploit-Validator": ("Repro-Creator",),
     "Candidate-Reviewer": ("Root-Cause-Analyst",),
-    "Patch-Creator": ("Root-Cause-Analyst",),
-    "Patch-Validator": ("Patch-Creator",),
+    "Patch-Applier": ("Root-Cause-Analyst",),
+    "Patch-Validator": ("Patch-Applier",),
     "Fix-Aggregator": ("Patch-Validator",),
 }
 
@@ -195,7 +198,12 @@ def _dependency_contract_by_bef(events: list[DomainEvent]) -> dict[BefPhase, dic
                 continue
             phase = _ROLE_PHASE[name]
             depends_on = set(event.subtask.depends_on)
-            for producer in _ROLE_DEPENDS_ON.get(name, ()):
+            producers = _ROLE_DEPENDS_ON.get(name, ())
+            if name == "Build-Verifier" and "Build-Executor" in role_index:
+                producers = ("Build-Executor",)
+            elif name == "Patch-Validator" and "Patch-Applier" in role_index:
+                producers = ("Patch-Applier",)
+            for producer in producers:
                 producer_index = role_index.get(producer)
                 if producer_index is None:
                     violations[phase].append(f"[{name}] missing producer role [{producer}]")

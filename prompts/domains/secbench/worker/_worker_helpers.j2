@@ -16,12 +16,12 @@ If upstream siblings (e.g., PoC-Researcher) shared findings, **validate and buil
 - Verify reported function names match the source code
 - Sibling binary-path findings are advisory: PREFER the path in `{{ artifact_paths.binary_paths }}`, but if a sibling found a working instrumented binary that `{{ artifact_paths.binary_paths }}` omits, verify it exists, is non-vacuous, and runs the sanitizer, then **rewrite `{{ artifact_paths.binary_paths }}` so the recovered absolute path is the declared line** (the handoff check and evaluator read ONLY that file) before you write `{{ artifact_paths.repro_script }}`, and use it rather than failing.
 - Peer findings are evidence inputs, not authority. If a peer points to a different
-  file or function than the manager described, keep the manager target unless raw
-  runtime evidence proves the manager target is wrong. Any deviation requires a
-  `MANAGER_OVERRIDE` block naming `MANAGER_EXPECTED`, `OBSERVED_EVIDENCE`,
-  `EVIDENCE_FILES`, `WHY_MANAGER_TARGET_IS_WRONG`, and `NEW_TARGET`.
+  file or function than the supervisor described, keep the supervisor target unless raw
+  runtime evidence proves the supervisor target is wrong. Any deviation requires a
+  `SUPERVISOR_OVERRIDE` block naming `SUPERVISOR_EXPECTED`, `OBSERVED_EVIDENCE`,
+  `EVIDENCE_FILES`, `WHY_SUPERVISOR_TARGET_IS_WRONG`, and `NEW_TARGET`.
 - If peer findings are wrong or incomplete, investigate independently rather than failing
-- **If a peer worker failed**, their work is unavailable — fall back to the manager's guidance and run the experiments yourself. Do not skip your task because a dependency failed.
+- **If a peer worker failed**, their work is unavailable — fall back to the supervisor's guidance and run the experiments yourself. Do not skip your task because a dependency failed.
 {% endmacro %}
 
 {% macro evidence_files_section(phase_key, extra_note='') %}

@@ -25,6 +25,7 @@ from core.domain.events.events import (
 )
 from core.domain.exceptions import DomainInvariantError
 from core.domain.values.llm_response import LLMResponse, LLMUsage
+from core.domain.values.node_message import Briefing
 from core.domain.values.subtask import Subtask
 from core.ports.runtime_ports import LLMPort, WorkerToolPort
 
@@ -119,6 +120,33 @@ class FakeChildAgentFactory:
     def max_total_agents(self) -> int:
         return self._max_total_agents
 
+    def get_sibling_role_prefixes(self, agent_id, parent_id) -> set[str]:
+        return set()
+
+    def get_tree_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def get_completed_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def get_failed_role_prefixes(self, agent_id) -> set[str]:
+        return set()
+
+    def mark_role_completed(self, agent_id) -> None:
+        return None
+
+    def mark_role_failed(self, agent_id) -> None:
+        return None
+
+    async def try_reserve(self, n: int) -> bool:
+        return True
+
+    async def commit_reservation(self, n: int) -> None:
+        self._total_created += n
+
+    async def release_reservation(self, n: int) -> None:
+        return None
+
 
 def _create_orchestrator(
     llm_port: LLMPort,
@@ -209,6 +237,28 @@ async def test_manager_decomposition() -> None:
     assert len(agent.child_ids) == 2, "Agent should track 2 child IDs"
 
 
+def test_child_briefing_carries_manager_evidence_references() -> None:
+    manager = AgentSession.create(
+        agent_id=uuid4(), role=AgentRole.MANAGER, config=_test_agent_config(), parent_id=uuid4()
+    )
+    manager.assign_task("Investigate the failed attempt")
+    subtask = Subtask(
+        description="Retry with the observed failure",
+        config=_test_child_config(),
+        evidence_references=("child_failed:123", "artifact:failure.log"),
+    )
+
+    manager.apply_subtasks_and_spawn_children(
+        subtasks=[subtask],
+        child_role=AgentRole.WORKER.value,
+        briefing=manager.build_briefing_for_child(),
+    )
+
+    spawned = next(event for event in manager.events if isinstance(event, ChildSpawned))
+    briefing = Briefing.model_validate(spawned.briefing)
+    assert briefing.evidence_references == subtask.evidence_references
+
+
 @pytest.mark.asyncio
 async def test_manager_llm_invalid_json_response() -> None:
     """Test that MANAGER handles LLM returning invalid JSON by publishing WorkFailed event."""
@@ -229,10 +279,10 @@ async def test_manager_llm_invalid_json_response() -> None:
     # When: Call orchestrator.evaluate_task(agent) with invalid JSON response
     await orchestrator.evaluate_task(agent)
 
-    # Then: Verify 7 events:
+    # Then: Verify 8 events:
     # AgentCreated, TaskAssigned, OperationStarted, PromptSent,
-    # TokensConsumed, WorkFailed, OperationFinished
-    assert len(agent.events) == 7, f"Expected 7 events, got {len(agent.events)}"
+    # TokensConsumed, WorkFailed, PostStepRequested, OperationFinished
+    assert len(agent.events) == 8, f"Expected 8 events, got {len(agent.events)}"
 
     # And: Find the WorkFailed event
     work_failed_event = None

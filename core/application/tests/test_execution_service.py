@@ -969,9 +969,10 @@ async def test_pending_reservation_released_on_generic_exception(
     # And: the persist path raises a NON-ConcurrencyError. This mirrors
     # the failure mode where save_new_agent hits a DB constraint that
     # gets wrapped as EventStoreError by postgres_event_store:210.
-    mock_event_store.append_batch.side_effect = EventStoreError(
-        "simulated DB write failure"
-    )
+    mock_event_store.append_batch.side_effect = [
+        EventStoreError("simulated DB write failure"),
+        None,
+    ]
 
     # When: run_agent_step is invoked
     with pytest.raises(EventStoreError):

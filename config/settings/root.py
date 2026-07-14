@@ -14,7 +14,6 @@ from .database import DatabaseConfig
 from .loader import _inject_env_database, _load_yaml_hierarchy
 from .orchestration import OrchestrationConfig
 from .output import OutputConfig
-from .security import SecurityConfig
 from .worker import (
     _WORKER_TOOL_PARAM_TYPES,
     ApiWorkerConfig,
@@ -24,14 +23,14 @@ from .worker import (
 
 
 class ApiSettings(BaseSettings):
-    """Query API config that intentionally does not require experiment models."""
+    """Query API config that intentionally does not require provider model settings."""
 
     model_config = SettingsConfigDict(extra="ignore")
 
     database: DatabaseConfig
     worker: ApiWorkerConfig
     orchestration: OrchestrationConfig
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    domain_plugins: dict[str, dict[str, Any]] = Field(default_factory=dict)
     cors: CorsConfig = Field(default_factory=CorsConfig)
 
     @classmethod
@@ -68,7 +67,7 @@ class Settings(BaseSettings):
     format_repairer: FormatRepairerConfig
     orchestration: OrchestrationConfig
     output: OutputConfig
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    domain_plugins: dict[str, dict[str, Any]] = Field(default_factory=dict)
     cors: CorsConfig = Field(default_factory=CorsConfig)
 
     @model_validator(mode="after")

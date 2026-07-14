@@ -61,7 +61,7 @@ async def test_repair_returns_raw_unchanged_on_llm_error() -> None:
     out = await repairer.repair(raw, schema_hint="<hint>")
 
     # Then: input is returned unchanged so the caller can surface its
-    # original parse error rather than masking it with a fixer error.
+    # original parse error rather than masking it with a repair error.
     assert out == raw
 
 

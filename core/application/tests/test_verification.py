@@ -262,8 +262,8 @@ class TestJudgeLargeOutput:
     async def test_judge_sees_tail_of_large_output(self) -> None:
         """Key evidence at the end of a large output must reach the judge.
 
-        This is the A1 fix: previously truncated to 3000 chars, now uses
-        head+tail with 12000 char budget.
+        Output uses head+tail with a 12000-character budget rather than a
+        short head-only truncation.
         """
         # Build a large output where the proof of success is at the very end
         padding = "Analyzing source code...\n" * 500  # ~12K chars of filler

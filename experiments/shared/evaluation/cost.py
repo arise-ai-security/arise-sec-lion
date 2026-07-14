@@ -7,6 +7,7 @@ calls) and worker-side ``WorkerCostRecorded.cost_usd`` (tool executions).
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from core.domain.events.events import TokensConsumed, WorkerCostRecorded
@@ -28,6 +29,23 @@ _ABS_TOL = 1e-4
 _REL_TOL = 1e-6
 
 
+@dataclass(frozen=True, slots=True)
+class CostEndpoints:
+    """Predeclared cost endpoints. Missing usage stays unknown, never zero.
+
+    When any required launch cost is unavailable, ``cost_available`` is False,
+    ``cost_per_*`` fields that depend on totals are None, and
+    ``missing_assignment_keys`` lists the exact incomplete assignments.
+    """
+
+    cost_per_run: float | None
+    cost_per_mechanical_success: float | None
+    cost_per_combined_success: float | None
+    completeness_rate: float
+    cost_available: bool = True
+    missing_assignment_keys: tuple[str, ...] = ()
+
+
 def llm_worker_costs(run_data: RunData) -> tuple[float, float]:
     """Return ``(llm_cost_usd, worker_cost_usd)`` for the run."""
     llm = sum((e.cost_usd for e in events_of_type(run_data.events, TokensConsumed)), 0.0)
@@ -39,6 +57,35 @@ def total_cost_usd(run_data: RunData) -> float:
     """Total run cost in USD (LLM + worker)."""
     llm, worker = llm_worker_costs(run_data)
     return llm + worker
+
+
+def cost_completeness_rate(run_data: RunData) -> float:
+    """Fraction of worker usage records with recoverable, terminal usage."""
+    records = list(events_of_type(run_data.events, WorkerCostRecorded))
+    if not records:
+        return 1.0
+    complete = sum(event.complete and not event.usage_missing for event in records)
+    return complete / len(records)
+
+
+def cost_endpoints(
+    runs: tuple[RunData, ...],
+    *,
+    mechanical_success: tuple[bool, ...],
+    combined_success: tuple[bool, ...],
+) -> CostEndpoints:
+    """Report the predeclared run, valid-fix, and completeness cost endpoints."""
+    if not runs or len(runs) != len(mechanical_success) or len(runs) != len(combined_success):
+        raise ValueError("runs and success vectors must have the same positive length")
+    total = sum(total_cost_usd(run) for run in runs)
+    mechanical_count = sum(mechanical_success)
+    combined_count = sum(combined_success)
+    return CostEndpoints(
+        cost_per_run=total / len(runs),
+        cost_per_mechanical_success=(total / mechanical_count if mechanical_count else None),
+        cost_per_combined_success=(total / combined_count if combined_count else None),
+        completeness_rate=sum(cost_completeness_rate(run) for run in runs) / len(runs),
+    )
 
 
 def cost_by_role(run_data: RunData) -> CostByRole:

@@ -36,16 +36,16 @@ def _adapter(**kwargs: Any) -> OpenHandsAdapter:
 def _container_session(tmp_path: Path) -> ContainerSessionContext:
     return ContainerSessionContext(
         container_id="abc123def456",
-        container_name="secbench-worker-demo",
-        image="secb-tools:demo.cve-2024-0001-patch",
+        container_name="plugin-worker-demo",
+        image="plugin-tools:demo.issue-0001",
         workspace_root=tmp_path,
         host_source_dir=tmp_path / "src",
-        host_testcase_dir=tmp_path / "testcase",
+        host_artifact_dir=tmp_path / "artifacts",
         host_work_dir=tmp_path / "src" / "demo",
         container_source_dir="/src",
-        container_testcase_dir="/testcase",
+        container_artifact_dir="/artifacts",
         container_working_directory="/src/demo",
-        helper_script=tmp_path / "secb-exec",
+        helper_script=tmp_path / "container-exec",
     )
 
 
@@ -252,7 +252,7 @@ class TestOpenHandsAdapter:
         self,
         tmp_path: Path,
     ) -> None:
-        # Given: an OpenHands worker for a container-backed SEC-bench run.
+        # Given: an OpenHands worker for a container-backed plugin run.
         adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"])
         container_session = _container_session(tmp_path)
 
@@ -267,15 +267,15 @@ class TestOpenHandsAdapter:
         for tool in tools:
             params = tool["params"]["container_session"]
             assert params["container_source_dir"] == "/src"
-            assert params["container_testcase_dir"] == "/testcase"
+            assert params["container_artifact_dir"] == "/artifacts"
             assert params["container_work_dir"] == "/work"
             assert params["host_source_dir"] == str(tmp_path / "src")
-            assert params["host_testcase_dir"] == str(tmp_path / "testcase")
+            assert params["host_artifact_dir"] == str(tmp_path / "artifacts")
             assert params["host_work_root"] == str(tmp_path / "work")
 
     def test_enable_subagents_flag_defaults_false_and_is_stored(self) -> None:
-        # Given/When: adapters built with and without the N2 subagent toggle.
-        # Then: the flag defaults off (N1) and is stored when enabled (N2).
+        # Given/When: adapters built with and without native subagent delegation.
+        # Then: the flag defaults off and is stored when enabled.
         assert _adapter().enable_subagents is False
         assert _adapter(enable_subagents=True).enable_subagents is True
 
@@ -284,7 +284,7 @@ class TestOpenHandsAdapter:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Given: an N2 adapter (enable_subagents) for a container-backed run.
+        # Given: an adapter with subagents enabled for a container-backed run.
         adapter = _adapter(allowed_tools=["file_editor", "glob", "grep"], enable_subagents=True)
         container_session = _container_session(tmp_path)
         captured: dict[str, Any] = {}
@@ -304,21 +304,21 @@ class TestOpenHandsAdapter:
             lambda **kw: kw,  # tool_factory
             lambda **kw: ("agent", kw),  # agent_factory
             container_session,
-            mcp_config={"mcpServers": {"security_tools": {}}},
+            mcp_config={"mcpServers": {"custom_tools": {}}},
         )
 
         # Then: a 'general-purpose' child is registered whose factory builds an
         # agent with the parent's CONTAINER-AWARE file tools (not host tools) and
-        # the shared MCP config — so subagent work executes in the CVE container.
+        # the shared MCP config — so subagent work executes in the plugin container.
         assert captured["name"] == "general-purpose"
         child = captured["factory"](llm="fake-llm")
         assert child[0] == "agent"
         kwargs = child[1]
         assert kwargs["llm"] == "fake-llm"
-        assert kwargs["mcp_config"] == {"mcpServers": {"security_tools": {}}}
+        assert kwargs["mcp_config"] == {"mcpServers": {"custom_tools": {}}}
         assert [tool["name"] for tool in kwargs["tools"]] == ["file_editor", "glob", "grep"]
         for tool in kwargs["tools"]:
-            assert tool["params"]["container_session"]["container_testcase_dir"] == "/testcase"
+            assert tool["params"]["container_session"]["container_artifact_dir"] == "/artifacts"
 
     def test_container_aware_file_editor_maps_shared_container_paths(
         self,
@@ -327,7 +327,7 @@ class TestOpenHandsAdapter:
         # Given: OpenHands file_editor receives canonical container paths.
         adapter = _adapter(allowed_tools=["file_editor"])
         container_session = _container_session(tmp_path)
-        container_session.host_testcase_dir.mkdir(parents=True)
+        container_session.host_artifact_dir.mkdir(parents=True)
         (container_session.host_work_root / "bin").mkdir(parents=True)
         conv_state = SimpleNamespace(
             workspace=SimpleNamespace(working_dir=str(tmp_path)),
@@ -343,10 +343,10 @@ class TestOpenHandsAdapter:
             conv_state,
             "file_editor",
         )
-        testcase_observation = tool(
+        artifact_observation = tool(
             tool.action_type(
                 command="create",
-                path="/testcase/base_commit_hash",
+                path="/artifacts/revision",
                 file_text="abc123",
             )
         )
@@ -360,25 +360,25 @@ class TestOpenHandsAdapter:
         idempotent_observation = tool(
             tool.action_type(
                 command="create",
-                path="/testcase/base_commit_hash",
+                path="/artifacts/revision",
                 file_text="abc123",
             )
         )
         conflicting_observation = tool(
             tool.action_type(
                 command="create",
-                path="/testcase/base_commit_hash",
+                path="/artifacts/revision",
                 file_text="different",
             )
         )
 
         # Then: writes land in the run-scoped host mirrors.
-        assert testcase_observation.is_error is False
+        assert artifact_observation.is_error is False
         assert work_observation.is_error is False
         assert idempotent_observation.is_error is False
-        assert idempotent_observation.path == "/testcase/base_commit_hash"
+        assert idempotent_observation.path == "/artifacts/revision"
         assert conflicting_observation.is_error is True
-        assert (tmp_path / "testcase" / "base_commit_hash").read_text() == "abc123"
+        assert (tmp_path / "artifacts" / "revision").read_text() == "abc123"
         assert (tmp_path / "work" / "bin" / "demo").read_text() == "binary placeholder"
 
     def test_container_aware_file_tools_hide_host_mirror_paths(
@@ -390,7 +390,7 @@ class TestOpenHandsAdapter:
         container_session = _container_session(tmp_path)
         source_dir = container_session.host_source_dir / "demo"
         source_dir.mkdir(parents=True)
-        container_session.host_testcase_dir.mkdir(parents=True)
+        container_session.host_artifact_dir.mkdir(parents=True)
         (source_dir / "vuln.c").write_text("int main(void) { return 0; }\n")
         conv_state = SimpleNamespace(
             workspace=SimpleNamespace(working_dir=str(tmp_path)),
@@ -511,7 +511,7 @@ class TestOpenHandsAdapter:
 
     def test_build_native_tools_rejects_mcp_or_unknown_tool_names(self) -> None:
         # Given: an MCP tool name accidentally placed in the native allowlist.
-        adapter = _adapter(allowed_tools=["file_editor", "valgrind_run"])
+        adapter = _adapter(allowed_tools=["file_editor", "analyze"])
 
         # When/Then: native tool validation rejects it before SDK construction.
         with pytest.raises(ValueError, match="Unsupported OpenHands native tool"):
@@ -625,10 +625,10 @@ class TestOpenHandsAdapter:
             "image": cs.image,
             "workspace_root": str(cs.workspace_root),
             "host_source_dir": str(cs.host_source_dir),
-            "host_testcase_dir": str(cs.host_testcase_dir),
+            "host_artifact_dir": str(cs.host_artifact_dir),
             "host_work_dir": str(cs.host_work_dir),
             "container_source_dir": cs.container_source_dir,
-            "container_testcase_dir": cs.container_testcase_dir,
+            "container_artifact_dir": cs.container_artifact_dir,
             "container_working_directory": cs.container_working_directory,
             "helper_script": str(cs.helper_script),
         }
@@ -987,6 +987,32 @@ class TestOpenHandsAdapterStreaming:
 class TestMCPServersWiring:
     """Verify ``task_context['mcp_servers']`` reaches the OpenHands Agent config."""
 
+    @staticmethod
+    def _shell_in_container_tool_definition() -> Any:
+        from mcp.types import Tool
+        from openhands.sdk.mcp.tool import (
+            MCPToolAction,
+            MCPToolDefinition,
+            MCPToolObservation,
+        )
+
+        return MCPToolDefinition(
+            description="run shell command",
+            action_type=MCPToolAction,
+            observation_type=MCPToolObservation,
+            executor=None,
+            mcp_tool=Tool(
+                name="shell_in_container",
+                description="run shell command",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            ),
+        )
+
     def test_extract_mcp_servers_returns_none_when_absent(self) -> None:
         # Given/When/Then
         adapter = _adapter()
@@ -996,13 +1022,37 @@ class TestMCPServersWiring:
     def test_extract_mcp_servers_returns_raw_dict_when_present(self) -> None:
         # Given
         adapter = _adapter()
-        raw = {"security_tools": {"command": "python", "args": [], "env": {}}}
+        raw = {"custom_tools": {"command": "python", "args": [], "env": {}}}
 
         # When
         result = adapter._extract_mcp_servers({"mcp_servers": raw})
 
         # Then
         assert result == raw
+
+    def test_mcp_action_accepts_sdk_data_wrapper_without_extra_keys(self) -> None:
+        # Given
+        openhands_adapter_module._apply_openhands_mcp_data_argument_patch()
+        tool = self._shell_in_container_tool_definition()
+
+        # When
+        action = tool.action_from_arguments({"data": {"command": "pytest -q"}})
+
+        # Then
+        assert action.data == {"command": "pytest -q"}
+
+    def test_mcp_action_rejects_data_wrapper_with_extra_keys(self) -> None:
+        from pydantic import ValidationError
+
+        # Given
+        openhands_adapter_module._apply_openhands_mcp_data_argument_patch()
+        tool = self._shell_in_container_tool_definition()
+
+        # When/Then
+        with pytest.raises(ValidationError, match="data"):
+            tool.action_from_arguments(
+                {"data": {"command": "pytest -q"}, "unexpected": "value"}
+            )
 
     def test_build_conversation_passes_mcp_config_kwarg_to_agent(
         self,
@@ -1020,7 +1070,7 @@ class TestMCPServersWiring:
             model="openai/gpt-4o",
             api_key="sk-test",
             allowed_tools=["file_editor", "glob", "grep"],
-            mcp_tools=["shell_in_container", "valgrind_run", "klee_run"],
+            mcp_tools=["shell_in_container", "analyze", "verify"],
         )
         captured: dict[str, object] = {}
 
@@ -1068,10 +1118,10 @@ class TestMCPServersWiring:
             conversation = adapter._build_conversation(
                 working_dir="/work",
                 mcp_servers={
-                    "security_tools": {
+                    "custom_tools": {
                         "command": "python",
-                        "args": ["-m", "plugins.security.mcp.security_tools_server"],
-                        "env": {"ARISE_SECBENCH_CONTAINER_ID": "abc"},
+                        "args": ["-m", "plugin.tools"],
+                        "env": {"CONTAINER_ID": "abc"},
                     }
                 },
             )
@@ -1087,13 +1137,13 @@ class TestMCPServersWiring:
         mcp_config = captured["mcp_config"]
         assert isinstance(mcp_config, dict)
         assert "mcpServers" in mcp_config
-        assert "security_tools" in mcp_config["mcpServers"]
-        assert mcp_config["mcpServers"]["security_tools"]["command"] == "python"
+        assert "custom_tools" in mcp_config["mcpServers"]
+        assert mcp_config["mcpServers"]["custom_tools"]["command"] == "python"
         assert captured["include_default_tools"] == ["FinishTool", "ThinkTool"]
         # And: the tools list does NOT contain the MCP server entries.
         for tool in captured["tools"]:
             tool_repr = repr(tool)
-            assert "security_tools" not in tool_repr
+            assert "custom_tools" not in tool_repr
             assert "MCPToolDefinition" not in tool_repr
         # And: the conversation handle came back from the fake SDK.
         assert conversation == "conversation-stub"
@@ -1105,7 +1155,7 @@ class TestTerminalToolRegistration:
     The host-side ``TerminalTool`` is intentionally NOT registered on the
     OpenHands agent. Container shells go through the MCP
     ``shell_in_container`` tool instead, so build/test commands never run
-    on the host where ``/src`` and ``/testcase`` do not exist.
+    on the host where the container paths do not exist.
     """
 
     def test_host_terminal_tool_absent_from_static_tool_sets(self) -> None:
@@ -1229,7 +1279,7 @@ class TestMcpChildProcessLifecycle:
 
     The OpenHands SDK boots MCP servers as long-lived stdio subprocesses.
     A graceful ``Conversation.close()`` is best-effort and has been
-    observed to leave ``python -m plugins.security.mcp.security_tools_server``
+    observed to leave ``python -m plugin.tools``
     children alive on shutdown, so the adapter wires a SIGTERM reaper that
     captures child PIDs immediately after ``_build_conversation`` and
     terminates survivors after ``close()`` runs.

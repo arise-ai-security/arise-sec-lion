@@ -6,10 +6,10 @@
 > pipeline), the role/artifact contract, and the mechanical + qualitative success/fail
 > criteria.
 >
-> **As-built vs target.** Parts I–IV describe the system **as it actually runs today**
-> (verified against source on 2026-06-14, citations are `file:line`). Forward-looking
-> work is isolated in **Part V — Target State & Known Gaps**, and target-only judges in
-> Part IV are explicitly labelled *DEFERRED*.
+> **As-built vs target.** Parts I–III and §IV.0 describe the current implementation.
+> §§IV.1–IV.6 preserve legacy criteria and earlier advisory designs and are labelled as
+> such; they are not the confirmatory authority. Part V records remaining gaps and the
+> status of fixes that replaced those legacy paths. Code and tests remain authoritative.
 >
 > **Provenance.** Every claim below was checked against live code (serena symbol tools +
 > `Read`/`Grep`) and the reference repos `../SEC-bench`, `../SecVerifier`. Where this
@@ -160,12 +160,9 @@ not literal. All infrastructure is injected at `bootstrap/`.
 - `infrastructure/` — adapters implementing `core/ports/` protocols (Postgres event
   store, worker adapters).
 - `plugins/security/` — **strictly cybersecurity**: the SEC-bench runtime, role catalog,
-  `CVEInstance`, deliverables, prompt strategy. The *main* SEC-bench implementation — but,
-  as built, security seams also live outside it: a `security` config section (`settings.py`),
-  worker MCP config referencing `plugins.security.mcp` (`mcp_config.py:14,26`), and
-  `run_invariants` deriving allowed bash commands from `settings.security`
-  (`run_invariants.py:123-129`). Treat "plugins is the only place" as the intended boundary
-  plus known drift, not a literal as-built fact.
+  `CVEInstance`, deliverables, prompt strategy, procedure registry, and security tools.
+  Generic layers reference only core ports; `bootstrap/composition.py` is the sole concrete
+  cross-boundary importer.
 - `bootstrap/` — wires plugins + infrastructure into core. Sole cross-boundary importer.
 - `prompts/` — Jinja2 templates, 4-tier (§II.6). No Python.
 - `query/` — FastAPI REST + React SPA, the read side of CQRS.
@@ -182,13 +179,13 @@ flowchart LR
     EM -->|append-only| ES[("Postgres events table<br/>UNIQUE(aggregate_id, sequence_number)")]
     ES -->|load_from_history| RP["replay: fold events through @_apply<br/>version += 1 per event"]
     RP --> AGG["in-memory aggregate state"]
-    ES -->|EVENT_TYPE_REGISTRY<br/>38 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
+    ES -->|EVENT_TYPE_REGISTRY<br/>42 types| RD["Read side / CQRS<br/>hierarchy CTEs, BOSS projections,<br/>experiments eval (RunData)"]
     classDef store fill:#cde,stroke:#226;
     class ES store
 ```
 
 - **Two event-sourced aggregates** (not one):
-  - `AgentSession` — the **primary** aggregate; 35 of the 38 event types mutate it.
+  - `AgentSession` — the **primary** aggregate; 39 of the 42 event types mutate it.
     — `core/domain/aggregates/agent_session.py`
   - `SharedStore` (= `ArtifactStore` + `DecisionLog`) — cross-agent shared state, with a
     `uuid5`-derived `aggregate_id` so it shares the same `events` table without colliding
@@ -206,12 +203,12 @@ flowchart LR
   (commit `2d669d0`); the harness no longer writes it and evaluators read DB events only.
   — `experiments/shared/harness.py:495-499`, `experiments/shared/evaluation/criteria.py:375-377`
 
-> **Aggregate & event counts.** There are **38** registered event types
+> **Aggregate & event counts.** There are **42** registered event types
 > (`postgres_event_store.py:54-102`) and **two** aggregates: `AgentSession` is the
-> *primary/central* aggregate (35 of the 38 event types), `SharedStore` the second (3).
+> *primary/central* aggregate (39 of the 42 event types), `SharedStore` the second (3).
 > `CLAUDE.md` and `.claude/docs/` are aligned with this (drift resolved — see §V.6).
 
-### Event catalog (38 types)
+### Event catalog (42 types)
 
 All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 `core/domain/events/events.py:27`); all are registered in `EVENT_TYPE_REGISTRY`.
@@ -220,7 +217,7 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 |---|---|
 | Session lifecycle / hierarchy | `AgentCreated`, `TaskAssigned`, `StatusChanged`, `SubtasksDefined`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `ComplexityEvaluated`, `RedecompositionTriggered`, `RetryScheduled`, `FailureDigestRecorded`, `LimitEnforced` |
 | Assessment / decision | `ProbeStarted`, `ProbeCompleted`, `DecisionInfeasible`, `PromptSent` |
-| Execution | `CodeGenerationStarted`, `ThoughtCaptured`, `ProcedureExecutionStarted`, `ProcedureExecutionFinished` |
+| Execution | `CodeGenerationStarted`, `ThoughtCaptured`, `ProcedureExecutionStarted`, `ProcedureExecutionFinished`, `PhaseRouteSelected`, `PhaseGateRecorded`, `PatchPlanApproved`, `PromptContextAssembled` |
 | **Verification** | `VerificationPassed`, `VerificationFailed` (`failed_stage` ∈ structural/deterministic/execution/judge) |
 | **Runtime-surface (anti-leak)** | `RuntimeSurfaceSealed` (carries `sealed_artifacts: list[SealedArtifact]`) |
 | Completion / run-level / timing | `WorkCompleted`, `WorkFailed`, `RunStarted`, `RunCompleted`, `AgentExecutionStarted`, `AgentExecutionFinished`, `OperationStarted`, `OperationFinished` |
@@ -238,18 +235,25 @@ All subclass `DomainEvent` (`model_config = {"frozen": True}`,
 
 ## II.3 — Execution modes: flat vs hierarchical
 
+Active experiment treatments are N1 flat, B4 `b4-adaptive-manager-v2`, and B3
+`b3-direct-compact-v1`.
+
 ```
 FLAT ARM (single agent runs all four phases in order)
    one WORKER ── Build ─▶ Exploit ─▶ Fix ─▶ Report
    no manager / sibling / handoff vocabulary
 
-HIERARCHICAL ARM (BOSS → MANAGER → WORKER recursion)
+HIERARCHICAL B4 (BOSS → MANAGER → WORKER)
                 ┌──────── BOSS ────────┐         decomposition + verification
                 │   assess + decompose │
         ┌───────┼───────────┬──────────┼─────────┐
      [Builder] [Exploiter] [Fixer]  [Reporter]   ← phase managers
         │           │          │          │
     leaf WORKERs prefixed with a [Role] from the catalog (§III)
+
+DIRECT-COMPACT B3 (BOSS → WORKER)
+   the host generically flattens the same B4 phase/role DAG
+   → 9 direct role workers (5 LLM + 4 host procedures), no Managers
 ```
 
 Both arms share the **same phase contracts** (§II.6); the hierarchical arm adds role
@@ -395,16 +399,17 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
                           phase_commands,             • patch          (gold fix)
                           required_files,             • candidate_fixes (fix bodies)
                           validation_required,        • secb_sh        (golden repro())
-                          hierarchical_only, …      cve_instance.py:15-17, 106-110
+                          hierarchical_only, …        • bug_report     (answer-bearing report)
+                                                  cve_instance.py:15-17, 106-110
 ```
 
-**`_CVE_DISPLAY_FIELDS`** — the 11-field allowlist actually shown to the agent
+**`_CVE_DISPLAY_FIELDS`** — the 10-field allowlist actually shown to the agent
 (`prompt_strategy.py:29-41`, empty values dropped): `instance_id`, `cve_id`, `repo`,
 `project_name`, `lang`, `sanitizer`, `base_commit`, `work_dir`, `bug_description`,
-`sanitizer_report`, `bug_report`.
+`sanitizer_report`.
 
-> `sanitizer_report` and `bug_report` are kept **on purpose** — they are the *expected-
-> failure oracle* the Exploiter must match, not the answer. The fix (`patch`),
+> `sanitizer_report` is kept **on purpose** as the expected-failure oracle the
+> Exploiter must match. The potentially answer-bearing `bug_report`, the fix (`patch`),
 > alternative fixes (`candidate_fixes`), and the golden harness (`secb_sh`) are stripped.
 > Golden strings appear in templates only as **prohibitions** in
 > `_secb_runtime_contract.j2:11`. Verified absent from rendered prompts:
@@ -412,18 +417,21 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
 
 ### Retry semantics — what triggers a retry, and the cap
 
-Only **WORKER** agents retry. **Two paths run in sequence** on a failed worker
-(`execution_service.py:1139-1148`): (1) **verification-specific** — on a verification
-failure with judge feedback, capped at `verification_max_retries` (default **2** ⇒ up to
-**3** attempts); then if that declines, (2) the **generic `RetryPolicy`** — for any
-still-failed worker, with budget = length of `orchestration.retry.model_escalation_chain`
-plus model escalation + circuit breaker (`retry_policy.py:44,68-76`). With an empty
-escalation chain (the common default) path (2) is a no-op and the 3-attempt verification
-cap governs; with a configured chain, generic retries fire only while the existing
-`agent.retry_count` is still below `len(model_escalation_chain)` — both paths share
-`agent.retry_count` (`agent_session.py:371,627-633`), so it is **not** an extra budget
-stacked on top of the 3-attempt cap. The diagram below shows path (1); path (2) is omitted
-for clarity.
+Only **WORKER** agents retry. `PostStepHandler` owns three mutually bounded cases. A
+procedure-backed worker starts with one Host attempt. Failure records Host evidence and a
+bounded digest, then permits exactly one agentic repair outside both generic retry paths.
+If the repair fails, the worker fails terminally. If it completes, its provisional
+`WorkCompleted` is suppressed and the Host runs exactly one procedure recheck. Within the
+recovery path, only recheck success completes the role with protected Host evidence;
+recheck failure is terminal and permits no further LLM retry. A non-procedural
+verification failure or crash carrying feedback/digest uses `_maybe_retry_worker`, capped
+at `verification_max_retries` (default **2** ⇒ up to **3** attempts). If that path declines,
+`RetryPolicy` may schedule model escalation from
+`orchestration.retry.model_escalation_chain`. Both non-procedural paths share
+`agent.retry_count`, so their budgets do not stack independently.
+
+The diagram below covers only the non-procedural verification/crash path. The distinct
+procedure recovery sequence is summarized in the table that follows.
 
 ```mermaid
 stateDiagram-v2
@@ -432,7 +440,7 @@ stateDiagram-v2
     Completed --> Verify : VerificationPipeline.verify (verification_pipeline.py:133)
     Verify --> Passed : all stages + judge pass → VerificationPassed
     Verify --> Failed : any stage.check==False OR judge fail → VerificationFailed\nsets verification_feedback
-    Failed --> RetryGate : _maybe_retry_verification (execution_service.py:1150)
+    Failed --> RetryGate : PostStepHandler._maybe_retry_worker
     RetryGate --> Requeued : retry_count < 2 → schedule_retry (RetryScheduled)\nfeedback injected into retry prompt
     RetryGate --> TerminalFail : retry_count >= 2 (cap) OR role != WORKER → WorkFailed
     Requeued --> Running
@@ -442,11 +450,12 @@ stateDiagram-v2
 
 | Item | Value | Source |
 |---|---|---|
-| Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings.py:486-489` |
-| Attempt cap (verification path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `execution_service.py:1161` |
-| Second path (generic) | `RetryPolicy` model-escalation, budget = `len(model_escalation_chain)`; runs after the verification-specific path declines; shares `agent.retry_count` (not an extra budget) | `execution_service.py:1144`, `retry_policy.py:44,68-76` |
+| Config key / default / bounds | `verification_max_retries` / `2` / `ge=0,le=10` | `config/settings/orchestration.py` |
+| Attempt cap (verification/crash path) | ≤ 3 (1 initial + 2 retries; `retry_count` 0→1→2) | `post_step.py:_maybe_retry_worker` |
+| Procedure recovery | one initial Host attempt → one agentic repair → one Host recheck after completed repair; repair failure or recheck failure is terminal | `agent_orchestrator.py:execute_task`; `post_step.py:handle_post_step` |
+| Second non-procedural path | `RetryPolicy` model escalation; runs after `_maybe_retry_worker` declines and shares `agent.retry_count` | `retry_policy.py` |
 | Trigger | a structural stage failing **or** the LLM judge failing on a COMPLETED worker | `verification_pipeline.py:138-172` |
-| Enforcement site | `ExecutionService._maybe_retry_verification` | `execution_service.py:1150-1177` |
+| Enforcement site | `PostStepHandler.handle_post_step` | `core/application/services/orchestration/post_step.py` |
 
 > The live verification loop checks **generic worker-output** stages
 > (structural/deterministic/execution/judge); it does **not** re-check SEC-bench
@@ -460,14 +469,32 @@ stateDiagram-v2
 
 | Phase | Drives | Required roles | Optional roles |
 |---|---|---|---|
-| **Builder** | `secb build` | Build-Setup, Build-Compiler, Build-Verifier | — |
-| **Exploiter** | `secb repro` | Repro-Creator, Exploit-Validator | PoC-Researcher, Data-Flow-Analyst, PoC-Tester, Forward-Instrumentator |
-| **Fixer** | `secb patch` → `secb build` → `secb repro` | Root-Cause-Analyst, Patch-Creator, Patch-Validator | Candidate-Reviewer, Regression-Tester, Fix-Aggregator |
+| **Builder** | `secb build` | Build-Setup, Build-Executor, Build-Verifier | — |
+| **Exploiter** | `secb repro` | PoC-Researcher, Data-Flow-Analyst, PoC-Tester, Forward-Instrumentator, Repro-Creator, Exploit-Validator | — |
+| **Fixer** | `secb patch` → `secb build` → `secb repro` | Root-Cause-Analyst, Candidate-Reviewer, Regression-Tester, Patch-Applier, Patch-Validator | Fix-Aggregator |
 | **Reporter** | (synthesis) | Reporter | — |
 
-`plugins/security/roles.py` is the single source of truth (16 roles: **9 required, 7
+`plugins/security/roles.py` is the single source of truth (16 roles: **15 required, 1
 optional**); `plugins/security/deliverables.py` is the artifact contract; a drift test
 (`plugins/security/tests/test_roles.py`) keeps them — and the prompts — in lock-step.
+
+Those `required` flags describe the full catalog contract. The host's
+`InitialDecompositionPolicy` creates the root four-phase DAG and the nine-role compact
+route (Build-Setup, Build-Executor, Build-Verifier, Repro-Creator, Exploit-Validator,
+Root-Cause-Analyst, Patch-Applier, Patch-Validator, Reporter). After a required B4 phase
+failure, the LLM Manager uses the existing decomposition path to select same-phase roles
+and write failure-specific instructions.
+
+The host never interprets failure keywords. It validates and drops unsafe selections,
+closes hard dependencies, binds trusted catalog prompts/models/procedures, schedules the
+accepted route, and records provenance. Full remaining same-phase expansion is only the
+explicit-invalid-decision fail-safe. B3 sets `include_manager_layer: false`; generic core
+flattening preserves the same compact DAG as direct BOSS children. No study name or
+treatment identifier selects runtime behavior.
+
+`PhaseRouteSelected.task_sources` attributes every role instruction to `host_policy`,
+`llm`, or `host_repair`. Manager evidence references propagate through the selected
+subtask into the child `Briefing` and worker prompt.
 
 ## III.2 — Role dependency DAG
 
@@ -478,23 +505,22 @@ optional.
 ```mermaid
 graph LR
   subgraph Builder
-    BS[Build-Setup]:::req --> BC[Build-Compiler]:::req --> BV[Build-Verifier]:::req
+    BS[Build-Setup]:::req --> BE[Build-Executor]:::req --> BV[Build-Verifier]:::req
   end
   subgraph Exploiter
-    PR[PoC-Researcher]:::opt --> FI[Forward-Instrumentator]:::opt
-    DFA[Data-Flow-Analyst]:::opt
-    PT[PoC-Tester]:::opt
+    PR[PoC-Researcher]:::req --> FI[Forward-Instrumentator]:::req
+    DFA[Data-Flow-Analyst]:::req
+    PT[PoC-Tester]:::req
     RC[Repro-Creator]:::req --> EV[Exploit-Validator]:::req
     PR -.-> PT
     PR -.-> RC
     PT -.-> RC
   end
   subgraph Fixer
-    RCA[Root-Cause-Analyst]:::req --> CR[Candidate-Reviewer]:::opt
-    RCA --> PC[Patch-Creator]:::req --> PV[Patch-Validator]:::req --> FA[Fix-Aggregator]:::opt
-    RT[Regression-Tester]:::opt
+    RCA[Root-Cause-Analyst]:::req --> CR[Candidate-Reviewer]:::req
+    RCA --> PA[Patch-Applier]:::req --> PV[Patch-Validator]:::req --> FA[Fix-Aggregator]:::opt
+    CR -.-> RT[Regression-Tester]:::req
     FI -.-> RCA
-    CR -.-> RT
   end
   REP[Reporter]:::req
   PV -.-> REP
@@ -504,14 +530,12 @@ graph LR
   classDef opt fill:#eee,stroke:#999,stroke-dasharray:3 3;
 ```
 
-- **Required (9):** Build-Setup, Build-Compiler, Build-Verifier, Repro-Creator,
-  Exploit-Validator, Root-Cause-Analyst, Patch-Creator, Patch-Validator, Reporter.
-- **Optional (7):** PoC-Researcher, Data-Flow-Analyst, PoC-Tester, Forward-Instrumentator,
-  Candidate-Reviewer, Regression-Tester, Fix-Aggregator.
-- **Data-Flow-Analyst** is an isolated optional node (no hard/soft edges, no artifact).
+- **Required (15):** every catalog role except Fix-Aggregator.
+- **Optional (1):** Fix-Aggregator.
+- **Data-Flow-Analyst** is an isolated required analysis node (no hard/soft edge).
 
-> **Naming note.** The catalog has `Exploit-Validator` (required verdict) and `PoC-Tester`
-> (optional empirical confirmation) — there is **no** `PoC-Validator` in source; that name
+> **Naming note.** The catalog has `Exploit-Validator` and `PoC-Tester`; both are required.
+> There is **no** `PoC-Validator` in source; that name
 > appears only in historical `events.jsonl` run logs. Any rename must be an explicit
 > catalog change with tests. — `roles.py:115,144`
 
@@ -520,18 +544,18 @@ graph LR
 | Role | Phase | Req? | Hier-only artifact? | Produces |
 |---|---|---|---|---|
 | Build-Setup | Builder | ✅ | — | `base_commit_hash` |
-| Build-Compiler | Builder | ✅ | — | `build.sh`, `repo_changes.diff`, `binary_paths.txt` |
-| Build-Verifier | Builder | ✅ | — | — (runs binary under ASan; self-report) |
-| PoC-Researcher | Exploiter | ⬜ | — | — (insight: `poc_operation_map.txt`) |
-| Data-Flow-Analyst | Exploiter | ⬜ | — | — |
-| PoC-Tester | Exploiter | ⬜ | — | — |
-| Forward-Instrumentator | Exploiter | ⬜ | — | — (insight: `forward_instrumentation.log`) |
+| Build-Executor | Builder | ✅ | — | `build.sh`, `repo_changes.diff`, `binary_paths.txt` |
+| Build-Verifier | Builder | ✅ | — | — (host procedure when enabled) |
+| PoC-Researcher | Exploiter | ✅ | — | — (evidence: `poc_operation_map.txt`) |
+| Data-Flow-Analyst | Exploiter | ✅ | — | — |
+| PoC-Tester | Exploiter | ✅ | — | — |
+| Forward-Instrumentator | Exploiter | ✅ | — | — (evidence: `forward_instrumentation.log`) |
 | Repro-Creator | Exploiter | ✅ | — | `poc_path.txt`, `repro.sh` |
 | Exploit-Validator | Exploiter | ✅ | — | `exploit_validation_results.txt` |
-| Root-Cause-Analyst | Fixer | ✅ | **yes** (`root_cause_analysis.txt`) | `root_cause_analysis.txt` |
-| Candidate-Reviewer | Fixer | ⬜ | — | — |
-| Regression-Tester | Fixer | ⬜ | — | — |
-| Patch-Creator | Fixer | ✅ | — | `model_patch.diff` |
+| Root-Cause-Analyst | Fixer | ✅ | **yes** | `root_cause_analysis.txt`, `patch_plan.json` |
+| Candidate-Reviewer | Fixer | ✅ | — | — |
+| Regression-Tester | Fixer | ✅ | — | — |
+| Patch-Applier | Fixer | ✅ | — | `model_patch.diff` (host-rendered from the approved PatchPlan) |
 | Patch-Validator | Fixer | ✅ | — | `patch_validation_results.txt` |
 | Fix-Aggregator | Fixer | ⬜ | — | `fix_summary.md` |
 | Reporter | Reporter | ✅ | — | `security_report.md` |
@@ -540,6 +564,34 @@ The Root-Cause-Analyst emits a structured block with five keys
 (`ROOT_CAUSE_BLOCK_KEYS`, `deliverables.py:170`): `PROPOSED_FIX_SITE`,
 `PROPOSED_FIX_SITE_RATIONALE`, `ALTERNATIVE_SITE`, `ALTERNATIVE_SITE_REJECTED_BECAUSE`,
 `RUNTIME_TYPE_TAG`.
+
+### Execution mechanism and model policy
+
+Mechanism and task character are independent axes. `thinking` is not a separate task
+class from reasoning.
+
+`host procedure` means deterministic code in the trusted Arise process, not a human
+operator or review queue. Its dispatch, argv, hashing, and event record are Host-owned;
+the command still executes in the run's mutable shared worker container. The procedure
+tier is an in-run gate, while the fresh external evaluator remains confirmatory authority.
+
+| Roles | Mechanism | Task character | Model |
+|---|---|---|---|
+| Build-Verifier, Exploit-Validator, Patch-Applier, Patch-Validator | host procedure | mechanical validation/transformation | none |
+| Build-Setup, Build-Executor, Repro-Creator | LLM | coding/execution | `gpt-5.4-mini` |
+| PoC-Researcher, Data-Flow-Analyst, Root-Cause-Analyst, Candidate-Reviewer | LLM | reasoning | `gpt-5.3-codex` |
+| PoC-Tester, Regression-Tester | LLM | reasoning/validation | `gpt-5.3-codex` |
+| Forward-Instrumentator | LLM | hybrid reasoning/coding | `gpt-5.3-codex` |
+| Fix-Aggregator, Reporter | LLM | synthesis/reasoning | `gpt-5.3-codex` |
+
+`none` describes each Host procedure attempt. If an initial attempt fails, the bounded
+recovery lifecycle above may invoke exactly one agentic repair before the Host recheck.
+
+This routing is implemented by `WorkerConfig.model_overrides` and resolved from the
+leading task-role prefix. B3 uses the same nine role labels and inherits B4's worker
+configuration, so each direct role resolves to the same model or host procedure. The
+missing Manager changes ancestry metadata only; dependency-scoped source packets remain
+equivalent because grouping predecessors expand to their current terminal leaf sinks.
 
 ## III.4 — Artifact contract
 
@@ -551,14 +603,15 @@ mandatory only when the phase is decomposed; **EVIDENCE** = path constant exists
 | Artifact (`/testcase/…` unless noted) | Producer | Status | Mechanical meaning |
 |---|---|---|---|
 | `base_commit_hash` | Build-Setup | REQUIRED | The vulnerable commit hash |
-| `/src/build.sh` | Build-Compiler | REQUIRED | Project build recipe (sanitizer flags preserved) |
-| `repo_changes.diff` | Build-Compiler | REQUIRED · **MAY_BE_EMPTY** | Builder source delta vs base; committed as `arise-builder-baseline` when non-empty |
-| `binary_paths.txt` | Build-Compiler | REQUIRED | Exact Builder-produced executable path(s), one per line |
+| `/src/build.sh` | Build-Executor | REQUIRED | External project build recipe (sanitizer flags preserved); never synthesized into `repo_changes.diff` |
+| `repo_changes.diff` | Build-Executor | REQUIRED · **MAY_BE_EMPTY** | Byte-exact `git diff --no-color` under `CVEInstance.work_dir` vs base; validated by Build-Verifier and committed as `arise-builder-baseline` when non-empty |
+| `binary_paths.txt` | Build-Executor | REQUIRED | Exact Builder-produced executable path(s), one per line |
 | `poc_path.txt` | Repro-Creator | REQUIRED | Pointer to the selected PoC (by content/CVE match, **not** a `poc*` glob) |
 | `repro.sh` | Repro-Creator | REQUIRED | The `secb repro` backing script; invokes the Builder binary |
 | `exploit_validation_results.txt` | Exploit-Validator | VALIDATION | Verdict block (PASS/FAIL + expected/observed sanitizer error, crash fn, determinism) |
 | `root_cause_analysis.txt` | Root-Cause-Analyst | HIER-ONLY | 5-key fix-site block (mandatory only when Fixer is decomposed) |
-| `model_patch.diff` | Patch-Creator | REQUIRED | git-apply-able Fixer diff (`git diff HEAD`, HEAD = builder baseline) |
+| `patch_plan.json` | Root-Cause-Analyst | HIER-ONLY | exact structured edit plan validated and approved by the host |
+| `model_patch.diff` | Patch-Applier | REQUIRED | host-rendered git-apply-able diff from the approved PatchPlan |
 | `patch_validation_results.txt` | Patch-Validator | VALIDATION | Verdict block (apply/build status + pre/post sanitizer + 3/3 no-crash) |
 | `fix_summary.md` | Fix-Aggregator | EVIDENCE (optional role) | Concise validated fix narrative |
 | `security_report.md` | Reporter | REQUIRED | Non-empty evidence-based report |
@@ -576,8 +629,9 @@ empty `/testcase/repro.sh` skeleton, the immutable `/testcase/patch.sh`.
 
 ```
 ALLOWED into prompt / container                FORBIDDEN to the agent
-  • 11 CVE display fields (incl. the             • CVEInstance.patch / candidate_fixes / secb_sh
-    sanitizer_report + bug_report ORACLE)          (stripped from template context)
+  • 10 CVE display fields (incl. the             • CVEInstance.bug_report / patch /
+    sanitizer_report oracle)                       candidate_fixes / secb_sh
+                                                   (stripped from template context)
   • /src/build.sh                                • baked golden secb / repro() body / replay_build.sh
   • shipped PoC files in /testcase                 (secb wrapper overlaid from sealed dir;
     (any filename)                                  REPLAY_ENABLED stripped)
@@ -601,28 +655,62 @@ event is emitted.
 
 Arise judges a run in two planes a non-LLM reader can both reach:
 1. **On-disk artifacts** under `runs/<run_id>/`, resolved from container paths via
-   `container_path_to_disk` (`experiments/shared/evaluation/common.py:392`); non-vacuity
-   = present AND `size>0`.
+   `container_path_to_disk` (`experiments/shared/evaluation/common.py:392`). A declared
+   PoC may be zero bytes; eligibility is based on declared-path resolution, not a blanket
+   `size>0` rule.
 2. **The Postgres event stream** — the single source of truth (`events.jsonl` retired).
 
-> ⚠️ **Correction (verified against source 2026-07-07).** An earlier revision of this section
-> said `criteria.py` self-labels OBSOLETE with all success judges UNWIRED. That is **stale**:
-> the banner was removed when the eval path was rewired (commits `fa51676`, `2ed422a`).
-> Today `evaluate_run` is the wired per-run verdict (consumed by `scripts/evaluate_run.py`,
-> `scripts/analyze_runs.py`), the `build_*_prompt` judge builders are invoked inside it, and
-> the file-presence/non-vacuity subset (`key_file_exists`, `artifacts_by_bef`,
-> `success_criteria_by_bef`) is consumed by `bef.py`/`linear.py`. Where §IV.6's honesty table
-> still labels judges UNWIRED/DEFERRED, treat it as predating this rewiring — re-verify
-> against `criteria.py` before relying on it.
+## IV.0 — Authoritative combined evaluator (current)
 
-## IV.1 — Pass/fail decision flow (target/advisory — not live enforcement)
+`experiments/shared/scripts/evaluate_run.py::run_verdict()` is the authoritative entry
+point. It exports run artifacts to the external SEC-bench evaluator and composes:
 
-The flow below is the *intended* gate sequence (phases run in catalog order
-Builder → Exploiter → Fixer → Reporter). **As built it is mostly advisory:** only the
-anti-leak seal (live in the runtime) and deliverable presence/non-vacuity (reported by
-`bef.py`/`linear.py`) actually run; the Built/Exploited/Fixed *success* gates are
-unwired/obsolete (criteria banner, §IV.6). Read it as the contract a future enforcement
-pass would apply, not what fails a run today.
+```text
+success = official_mechanical
+       AND safety_floor
+       AND host_regression
+       AND semantic_accepted
+```
+
+`experiments/shared/evaluation/combined_verdict.py` owns this composition. The older
+`criteria.py` verdict is retained under `diagnostic_legacy`; it is not authoritative.
+
+| Layer | As-built implementation | Remaining gap before confirmatory launch |
+|---|---|---|
+| Official mechanical | six independent fresh containers (PoC×3 + patch×3); exact crash-signature oracle on class / access / top frame; medium primary, strict/generous sensitivity | live image availability for every cohort instance |
+| Safety/provenance | canonical protected paths, current artifact hashes, replay target/base identity; **`fresh_base` proven from six distinct `container_id`s** (never asserted); each `ReferenceReplayResult` carries `replay_id`, `container_id`, `image_digest`, `base_commit` | the declared PoC payload path is not dynamically added to the protected set; PatchPlan/diff consistency is semantic evidence, not an arm-independent mechanical gate |
+| Host regression | 19 candidate plans keyed by `(instance_id, base_commit)`; project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound; confirmatory adapter fails before launch on any mismatch | replace the overlapping candidate roster and regenerate/freeze its plans |
+| Semantic | zero-human heterogeneous panel: `claude-opus-4-8`, `gpt-5.5-2026-04-23`, `gemini/gemini-3.5-flash` (LiteLLM Google AI Studio); all three seats valid, then 2-of-3; blinded packet includes frozen oracle + raw host replay + host regression | GPT and Gemini live smoke pass; Opus is externally blocked by Anthropic account credit |
+| Confirmatory completeness | evaluator availability is tracked separately from cost completeness; incomplete evaluations remain ITT failures with exact assignment keys and block the superiority decision | pilot must produce complete bundles for every assignment |
+| Human audit | removed from the authoritative path | do not reintroduce audit queue or overrides |
+
+The confirmatory N1/B4 preregistration is **draft and unfrozen**. Its 19-task candidate
+roster overlaps development enrollments; the adapter now rejects that overlap if someone
+tries to freeze it. Launch remains blocked until the roster is replaced and a real
+Postgres-backed run proves the required-failure recovery path end to end: Manager decision,
+host validation/repair, dependency closure, trusted binding, scheduling, execution, and
+persisted route provenance.
+
+Crash-signature oracle notes (cohort preflight): SEGV without READ/WRITE is the explicit
+access category `unknown` (e.g. `faad2.cve-2018-20362`); symbol-less stacks yield a
+normalized module-relative frame (e.g. `mutool+0x45c0d5` for `mupdf.ossfuzz-42520029`).
+All 19 current candidate fixtures produce complete signatures.
+
+Worker-model policy (separate from the judge plane): reasoning, hybrid, and synthesis
+roles use `gpt-5.3-codex`; pure coding/execution roles use `gpt-5.4-mini`; the four
+registered procedures use no model. See `.claude/docs/plugins-security.md` for the
+16-role mapping and `.claude/docs/experiments-rearchitecture.md` for the release gate.
+
+> **Supersession note.** Sections IV.1–IV.6 document the legacy in-run artifact criteria
+> and the design history that led to §IV.0. They explain retry diagnostics and residual
+> agentic-path risks only. `run_verdict()` and `combined_verdict.py` are the current
+> confirmatory authority.
+
+## IV.1 — Legacy pass/fail flow (historical/advisory)
+
+The flow below was the intended gate sequence before the combined evaluator landed.
+It records the legacy artifact contract and must not be used to determine confirmatory
+success; §IV.0 supersedes it.
 
 ```mermaid
 flowchart TD
@@ -647,12 +735,12 @@ flowchart TD
     class PASS ok
 ```
 
-## IV.2 — Mechanical gates (per role / phase)
+## IV.2 — Legacy mechanical gates (historical/advisory)
 
-A script *can* check each row from disk + supplied DB events. "Blocking?" = whether a
-failure *should* fail the run under full enforcement — **not** that it does today (most
-success rows are unwired, §IV.6; the live-wired rows are the anti-leak seal and deliverable
-presence). Names are the exact `deliverables.py` / `criteria.py` constants.
+At the time represented by this proposal, a script could check each row from disk plus
+supplied DB events. "Blocking?" meant whether a failure should fail under the proposed
+full enforcement; it does not describe the current §IV.0 authority. Names are the legacy
+`deliverables.py` / `criteria.py` constants.
 
 | Gate | Check | Blocking? | Artifact / event |
 |---|---|---|---|
@@ -672,25 +760,20 @@ presence). Names are the exact `deliverables.py` / `criteria.py` constants.
 | **Reporter** | `security_report.md` present + non-vacuous (sections are an LLM concern) | **yes** | `REQUIRED_FILES['Reporter']` |
 | **Lifecycle** | first event == `AgentCreated`; each WORKER reaches one terminal `WorkCompleted`/`WorkFailed`; retry chain respects ≤3 | warning | replay invariant `agent_session.py:558` |
 
-## IV.3 — Qualitative / LLM-judge rubric (target-state, currently DEFERRED)
+## IV.3 — Superseded qualitative-judge proposal (historical)
 
-Most of these judges are **target-state** (DEFERRED): the three `build_*_success_llm_prompt`
-builders are UNWIRED and `RunData` does not yet thread `CVEInstance` (it carries only
-`run_id`, `events`, `run_dir`, `manifest` — `experiments/shared/evaluation/models.py:64-77`).
-Each judge compares observed agent artifacts + DB events against the CVE **golden/reference**
-fields.
+This subsection preserves the earlier per-phase judge proposal. Its old assumptions are
+not current: `RunData` now carries an optional host-side CVE oracle and §IV.0 wires a
+three-seat, zero-human semantic panel after the mechanical, safety, and regression gates.
+The table remains useful as rubric history, not as an implementation description.
 
 > **Anti-leak nuance (important — see §II.6).** "Golden" here means *ground-truth expected
-> values*, **not** *secret-from-the-agent*. `sanitizer_report` / `bug_report` /
-> `bug_description` are the expected-failure **oracle that is ALREADY rendered to the agent**
-> (`_CVE_DISPLAY_FIELDS`) — the judge merely re-checks observed-vs-oracle; it introduces no
-> data the agent didn't see. Only the gold `patch` / `candidate_fixes` / `secb_sh` are
-> host-side-secret (`_PROMPT_FORBIDDEN_FIELDS = {patch, candidate_fixes, secb_sh}`,
-> `cve_instance.py:15`), and of those only the patch-correctness judge optionally consults
-> the gold `patch`. *Hiding* the oracle from the agent would itself be a target-state
-> anti-leak change, not current behavior.
+> values. `sanitizer_report` and `bug_description` are rendered to the agent through
+> `_CVE_DISPLAY_FIELDS`; `bug_report` is retained for evaluator-side judging but stripped
+> from solver prompt context because it may contain answer-bearing fix details. The gold
+> `patch`, `candidate_fixes`, and `secb_sh` are likewise host-side-only.
 
-The **first** judge below is different — a *provenance precondition* that needs no reference
+The **first proposed** judge below is different — a *provenance precondition* that needs no reference
 data at all: it cross-checks the agent's event-sourced transcript to catch fabricated
 verdicts (§IV.5).
 
@@ -703,24 +786,24 @@ verdicts (§IV.5).
 | Patch correctness & minimality | observed: full `model_patch.diff`, `patch_validation_results.txt`, `PROPOSED_FIX_SITE`, DB `SourceFileEdited`. **golden:** `bug_description`, `sanitizer_report`; optional host-side `patch` as reference | post-patch sanitizer none + 3/3 + clean + success; diff edits the root-cause site; **`over_broad_suppression=false`** (must NOT disable the sanitizer / strip `-fsanitize` / widen the allocation / blanket try-catch) | `{verdict, over_broad_suppression, fixes_root_cause, …}` |
 | Report evidence-quality | observed: `security_report.md` + all upstream verdict/log artifacts + DB events. **golden:** `sanitizer_report`, `bug_report`, `bug_description` | required sections present; every claim traces to a real artifact; stated error/site agree with golden (no narrating an unreproduced crash) | `{verdict, confidence, reason, evidence_refs}` |
 
-## IV.4 — How criteria read the event store (not files)
+## IV.4 — Legacy criteria event inputs (historical)
 
 **Invariant (holds today; target preserves it):** every mechanical function takes an
 explicit `events: list[dict]` argument and **never** reads on-disk `events.jsonl`
 (`criteria.py:375-377`; regression `test_criteria.py:139`).
 
-The events the wired path consults are those that actually exist: `AgentCreated`,
+The events the legacy diagnostic path consults are those that actually exist: `AgentCreated`,
 `WorkCompleted`/`WorkFailed`, `VerificationPassed`/`VerificationFailed`, `ChildSpawned`
 (drives `_is_hierarchical`), `SourceFileEdited` (edit provenance for `artifacts_by_bef`),
 and `RuntimeSurfaceSealed` (DB-only anti-leak audit). There is **no** dedicated
 per-stage "validation-result" event beyond `VerificationPassed`/`VerificationFailed`; the
 Built/Exploited/Fixed verdicts are computed *from disk* + supplied events (§V.2).
 
-## IV.5 — Execution provenance: how we know `secb` ran (and the fabrication gap)
+## IV.5 — Legacy agentic execution provenance and fabrication gap
 
-The agent runs `secb build|repro|patch` as **detached** bash commands that redirect output
-to **files**; separately, the worker adapter streams the agent's tool calls into the event
-store. Two channels, very different trust levels:
+On the legacy agentic path, the agent runs `secb build|repro|patch` as **detached** bash
+commands that redirect output to **files**; separately, the worker adapter streams the
+agent's tool calls into the event store. Two channels, very different trust levels:
 
 ```
 secb build|repro|patch  ← agent runs it DETACHED:  nohup bash -c 'secb repro > run.log 2>&1' &
@@ -738,33 +821,34 @@ secb build|repro|patch  ← agent runs it DETACHED:  nohup bash -c 'secb repro >
 |---|---|---|
 | Did the agent *issue* `secb …`? | **Yes — in events**, as a generic `ThoughtCaptured` tool_use (command text in `content`). | `ThoughtCaptured` `events.py:219-231` |
 | What did `secb` *output / exit*? | **Only weakly.** Launched detached → crash/exit go to `/testcase` files; the launcher's `tool_result` shows just "launched … pid N". The real output enters events **only if the agent reads the file back**. | `_validation_macros.j2:3-30`; `CmdRunObservation → tool_result` `openhands_adapter.py:356-364` |
-| Is there an authoritative `secb` *result* event? | **No.** No `SecbCommandExecuted` / dedicated exit-code event exists; the verdicts + `DETERMINISM_RUNS` live in agent-authored **files**, not events. | `events.py` (none); `criteria.py` reads files |
+| Is there an authoritative `secb` *result* event? | **Yes for the in-run procedure tier:** `ProcedureExecutionFinished` carries Host-created `ProcedureEvidence`. The worker cannot directly author that event, but execution still occurs in its mutable shared container, so the external fresh evaluator remains the confirmatory authority. **No for a legacy agentic command:** its verdict remains an agent-authored file plus generic transcript. | `events.py`; `procedure.py`; `criteria.py` |
 
-**The fabrication gap (the hallucination observed in practice).** Because the verdict is an
-agent-writable file and the result is *not* authoritatively event-sourced, an agent can
+**The residual legacy-path fabrication gap.** Because an agentic verdict is an
+agent-writable file and its result is not authoritatively event-sourced, an agent can
 write `VERDICT: PASS` / `DETERMINISM_RUNS: 3/3` **without ever launching `secb repro`** and
 still pass every file-presence / string-match gate (it can even `echo` fake
 `repro_run_*.log` files). The only hard-to-forge signal is the **event-sourced
 `ThoughtCaptured` transcript** — append-only, written by the orchestrator from worker-SDK
 callbacks, not by the agent's shell — where a missing `secb repro` launch or a missing
-real-crash observation gives the fabrication away. Nothing cross-checks the verdict file
-against that transcript today. Two fixes:
+real-crash observation gives the fabrication away. The procedure tier prevents direct
+fabrication of its event and verdict path for four fixed roles. It does not make the
+shared worker container a trusted fresh environment; the external combined evaluator
+separately establishes confirmatory truth through fresh replay. Agentic retry evidence
+remains diagnostic and cannot substitute for either Host-owned channel.
 
-- **Near-term (LLM judge):** the **Execution-provenance / anti-fabrication** judge (§IV.3)
-  reads the transcript + verdict files and rejects a PASS the transcript does not back.
-  This is the sub-criterion for the self-reported-verdict / determinism hallucination.
-- **By construction:** event-source the `secb` results themselves (§V.7) so the verdict is
-  read from an agent-unforgeable event instead of inferred from a transcript.
+## IV.6 — Legacy in-run criteria (not confirmatory authority)
 
-## IV.6 — Mechanical vs LLM-judged vs not-yet-enforced (honesty table)
+This table describes the runtime artifact/retry path only. The confirmatory success
+authority is the independent combined evaluator in §IV.0, which closes the exact-oracle,
+fresh-replay, regression, and semantic-review gaps listed here.
 
-| Criterion | Currently mechanical (wired) | LLM-judged (wired) | Not-yet-enforced (gap) |
+| Criterion | Legacy mechanical state | Legacy LLM state | Residual in-run gap |
 |---|---|---|---|
 | Deliverable presence + non-vacuity | ✅ BEF: `artifacts_by_bef` / `success_criteria_by_bef` / `key_file_exists`; linear: `_artifacts_linear` / `_success_linear` + `key_file_exists` (`linear.py:61,84,102`) | — | — |
 | Anti-leak sealing | ✅ live in `docker_runtime.py`, audited by `RuntimeSurfaceSealed` | — | golden file under a name outside `_FORBIDDEN_TESTCASE_ARTIFACTS` survives |
 | Build success (real ELF) | ✅ presence of `binary_paths.txt` only | — | `built_success_mechanical` UNWIRED; ELF check is size+name hack; globs a **phantom** `build_verification*` no prompt emits |
 | Exploit verdict (PASS + 3/3) | partial: verdict-file **presence** wired | — | never re-runs `secb repro`; accepts ANY sanitizer token, not the CVE's expected error |
-| **`secb` actually executed (vs fabricated verdict)** | the agent's tool-call transcript IS event-sourced (`ThoughtCaptured`) | — | nothing cross-checks the verdict file against the transcript; `VERDICT`/`DETERMINISM_RUNS` are agent-written & forgeable → **anti-fabrication judge §IV.3 is the mitigation, §V.7 the by-construction fix** |
+| **`secb` actually executed (vs fabricated verdict)** | the legacy agentic tool-call transcript is event-sourced (`ThoughtCaptured`); procedure roles emit host-created evidence | — | agentic verdict files remain forgeable diagnostics; procedure events and §IV.0 fresh replay are authoritative for their respective paths |
 | Exploit triggers the CVE's exact error/site | — | — (target judges UNWIRED) | wrong-reason crash passes; only agent self-report compares |
 | Repro→binary handoff | strict logic exists | — | **UNWIRED** (test-only); live defense is prompt self-report |
 | Patch valid + clean apply + 3/3 | partial: verdict-file **presence** wired | — | `fixed_success_mechanical` **fully dead**; nothing re-applies/re-builds post-hoc |
@@ -774,13 +858,14 @@ against that transcript today. Two fixes:
 | Report evidence-backed | ✅ empty/whitespace caught | — (report judge UNWIRED) | nonempty-but-fabricated report passes |
 | Built/Exploited/Fixed during the run (live retry) | — | structural/deterministic/execution/judge over **generic** output drives retry | the live pipeline does NOT re-check SEC-bench correctness; a well-formed-but-false deliverable survives |
 
-**Three gate tiers to keep distinct.** (A) runtime/anti-leak in `docker_runtime.py` —
+**Three runtime gate tiers to keep distinct.** (A) runtime/anti-leak in `docker_runtime.py` —
 strong, live, mechanical; (B) in-prompt PASS blocks in `phases/*.j2` — agent **self-grade**
 transcribed into verdict files, *not* independent; (C) post-hoc `criteria.py` success
 judges — correct-ish logic but UNWIRED. Strongest guarantee: golden-data anti-parroting
 (tier A). Weakest: sanitizer-suppression, wrong-reason-crash, flaky-repro, fabricated-
-verdict — all need `CVEInstance` ground truth threaded through `RunData` **and**
-independent host-side re-execution, neither of which exists today.
+verdict. These limitations remain relevant to live retry decisions, but the
+confirmatory evaluator now receives the oracle through `RunData` and independently
+replays every PoC and patch in fresh containers.
 
 ---
 
@@ -803,20 +888,14 @@ re-seed), not by-construction.
 the agent-writable testcase dir (keep seeding `repro.sh` — it is legitimately agent-
 editable). `SealedRuntimeSurface` already records the sha, so it stays consistent.
 
-## V.2 — Criteria CVE-awareness (unwired)
+## V.2 — Evaluator CVE-awareness — IMPLEMENTED
 
-- Thread the **host-side golden** `CVEInstance` (or a redacted projection) into `RunData`
-  at the harness/composition layer — without importing `plugins/security` into the eval
-  package — so judges match against `expected_sanitizer_error` / `sanitizer_report` /
-  `bug_report` instead of hardcoded strings.
-- **Wire** `built_/exploited_/fixed_success_mechanical` and the three
-  `build_*_success_llm_prompt` builders into a consumer (`bef.py`/`linear.py` call none of
-  them today; `fixed_success_mechanical` + two LLM-prompt builders have **zero** refs).
-- Replace the "any `asan|valgrind|heap-buffer|stack-buffer` token" acceptance
-  (`criteria.py:597`) with an exact match to the CVE oracle.
-- Stop referencing the **phantom** `build_verification_summary.md` / `build_verification*`
-  glob (no prompt emits it); re-point at `build.exit` / `binary_paths.txt`.
-- Replace the ELF size+name-allowlist hack with real `b"\x7fELF"` magic.
+`RunData.cve` carries a boundary-clean oracle projection into evaluation. The
+authoritative combined evaluator performs exact class/access/top-frame comparison on
+three independent pre-patch and three independent post-patch SEC-bench replays, includes
+the frozen oracle and raw replay/regression evidence in the blinded semantic packet, and
+never exposes the gold patch to a judge. Legacy in-run Built/Exploited/Fixed artifact
+criteria remain retry diagnostics; they are not the confirmatory success authority.
 
 ## V.3 — Per-validation-result events (optional)
 
@@ -825,13 +904,13 @@ The detailed SEC-bench Built/Exploited/Fixed verdicts live in `runs/<run_id>/` f
 wanted, add dedicated per-stage events; otherwise the file-based verdicts plus
 `VerificationPassed`/`VerificationFailed` remain the contract.
 
-## V.4 — Live host-side re-execution (open question)
+## V.4 — Independent live replay — IMPLEMENTED
 
-No gate ever independently re-runs `secb repro` or re-applies the patch on the host;
-`DETERMINISM_RUNS: 3/3`, exploit PASS, and `patch_validation` PASS are agent-self-reported
-(at most string-matched by UNWIRED code). Decide: add a host-side re-execution harness, or
-rely on the CVE-aware LLM judge over the transcripts. See §IV.5 (the fabrication gap) and
-§V.7 (event-sourcing `secb` results) — the same root cause.
+The external SEC-bench adapter independently evaluates PoC and patch exports three times
+each, derives `fresh_base` from six distinct captured container identities, compares every
+replay with the frozen exact oracle, and combines those results with the arm-independent
+container regression gate. Replay IDs, container IDs, image digests, base commits, raw
+reports, command hashes, and timestamps are persisted in the evaluation bundle.
 
 ## V.5 — Anti-leak denylist → allowlist (residual)
 
@@ -842,31 +921,82 @@ Consider seeding by allowlist (delete everything not explicitly permitted).
 ## V.6 — Documentation drift (resolved)
 
 `CLAUDE.md` and `.claude/docs/` now describe **two** aggregates (`AgentSession` *primary* +
-`SharedStore`) and **38** registered event types, matching `postgres_event_store.py:54-102`
+`SharedStore`) and **42** registered event types, matching `EVENT_TYPE_REGISTRY`
 and `shared_context.py`. The earlier "sole aggregate / ~31 events" drift is fixed.
 
-## V.7 — Event-source the `secb` results (anti-fabrication by construction) — IMPLEMENTED (flag-gated) for validators
+## V.7 — Event-source fixed SEC-bench work (anti-fabrication by construction) — IMPLEMENTED (flag-gated)
 
-**Gap.** `secb build|repro|patch` runs as the agent's own **detached** bash; its exit code
-and sanitizer output land in agent-writable `/testcase` files, and only a *generic* tool
-transcript (`ThoughtCaptured`) is event-sourced (§IV.5). So `VERDICT: PASS` /
+**Legacy agentic-path gap.** When `secb build|repro|patch` runs as the agent's own
+**detached** bash, its exit code and sanitizer output land in agent-writable `/testcase`
+files, and only a *generic* tool transcript (`ThoughtCaptured`) is event-sourced (§IV.5).
+So `VERDICT: PASS` /
 `DETERMINISM_RUNS: 3/3` are agent-authored and forgeable — the hallucination observed in
 practice (a PASS written without `secb repro` ever running).
 
 **Fix (landed, behind `settings.orchestration.procedural_dispatch`).** The deterministic
-**procedure tier** routes the two **validator** roles through an Arise-mediated host-side
-channel. `SecBenchProcedureExecutor` (`plugins/security/procedures.py`), bound via
-`DomainPlugin.get_procedure_executor()`, drives `secb repro` ×3 / `secb patch` / `secb build`
-on the run's container and emits `ProcedureExecutionStarted` / `ProcedureExecutionFinished`
-carrying per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, bounded
-`excerpt`) captured **outside the agent's control**. The exploit/patch verdict is
-host-computed from crash signatures (`plugins/security/crash_signature.py`) matched against
-the CVE oracle, so determinism (3/3) and the Exploited/Fixed verdicts are verifiable from the
-DB and agent-unforgeable — closing this gap for validator verdicts when the flag is on. (The
-landed events are `ProcedureExecution{Started,Finished}` + `ProcedureEvidence`, not the
-originally-sketched `SecbCommandExecuted`.) Default off ⇒ `NullProcedureExecutor` ⇒
-in-container agentic `secb`, and the §IV.3 anti-fabrication judge remains the mitigation for
-the agentic path; Builder/Reporter roles are still agentic (no validator procedure).
+**procedure tier** routes four fixed roles (`Build-Verifier`, `Exploit-Validator`,
+`Patch-Applier`, `Patch-Validator`) through an Arise-mediated host-side channel.
+`SecBenchProcedureExecutor` (`plugins/security/procedures.py`), bound via
+`DomainPlugin.get_procedure_executor()`, drives build verification, three direct exploit
+replays, literal approved-PatchPlan rendering, `secb patch`, and post-patch build/replay on
+the run's container. It emits `ProcedureExecutionStarted` / `ProcedureExecutionFinished`
+with per-command `ProcedureEvidence` (`argv`, `exit_code`, `output_sha256`, bounded
+`excerpt`) computed by the Host. The worker cannot directly author those events, but the
+commands still run inside its mutable shared container; the evidence is an in-run control,
+not a substitute for the external §IV.0 fresh-replay authority.
+
+An initial Host procedure failure records that evidence and a bounded digest, then permits
+exactly one agentic repair. A failed repair is terminal. A completed repair is provisional:
+the orchestrator suppresses its terminal `WorkCompleted` and runs exactly one Host procedure
+recheck. Within this recovery path, only recheck success completes the role and produces
+protected Host success evidence. Recheck failure is terminal and cannot trigger another
+LLM repair. The failed initial Host evidence remains in the event stream.
+
+The agent-authored `repro.sh` is parsed as a structured contract, not executed. Its first
+four non-empty lines are fixed; the final line is `exec "$BIN"` plus inert literal
+arguments and exactly one `$POC`, or ends with the sole supported redirection `< "$POC"`.
+Examples are OpenEXR `exec "$BIN" -v "$POC" /dev/null` and FAAD2
+`exec "$BIN" "$POC" -o /dev/null`. Other variables, command substitution, shell control
+operators, wrappers, pipes, setup commands, and other redirections fail closed. The Host
+resolves and directly executes the argv vector or supplies the frozen PoC bytes on stdin.
+
+Build-Verifier recomputes the repository state under `CVEInstance.work_dir` and requires
+its byte-exact `git diff --no-color` output to equal `repo_changes.diff` at the Builder
+producer boundary. The external `/src/build.sh` recipe remains a separate artifact and is
+never synthesized into that repository delta. Before exploit validation, a sealed replay
+contract binds the CVE/base/sanitizer/work directory, dataset exit oracle, source HEAD,
+Builder-baseline digest (`build.sh`, `repo_changes.diff`, and tracked state measured through
+a Host-owned index), reproducer, PoC/pointer bytes, every declared binary's path/mode/digest,
+resolved argv/stdin mode, and any required project-local library's SONAME, candidate,
+resolved target, target digest, and effective loader path. After all three exploit runs, the
+Host revalidates and recaptures the complete identity before sealing it with the verdict
+hash. Patch approval additionally seals the plan, rendered diff, and replay identity.
+Symlinked or changed inputs fail closed.
+
+Procedure execution never uses `bash -lc`. It preserves the image's OSS-Fuzz variables,
+fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`, and adds
+sanitizer-specific halt options for direct replay. When a direct ELF reports a canonical
+missing shared-library SONAME, the Host may resolve one unique safe candidate below the
+CVE work directory and freeze its concrete directory into the replay environment;
+missing, ambiguous, or path-escaping candidates fail closed. A declared-binary startup
+probe streams output under a Host-owned liveness deadline; the deadline guards the
+external process, not the in-memory predicate. When the exact configured sanitizer marker
+appears, the Host stops the probe and resets the shared container immediately, returning
+`STOPPED_AFTER_MARKER`; this is distinct from `TIMED_OUT`. Reaching the deadline without
+the marker returns `TIMED_OUT` and fails. Every startup-probe outcome resets the container
+so detached descendants cannot survive. Every ordinary build, patch, exploit-replay, and
+post-patch-replay timeout remains fatal and triggers container recovery. Reset failure is
+an infrastructure error. Build verification otherwise requires `secb build`
+to exit 0, executable ELF targets, and the configured sanitizer runtime. Exploit validation
+requires complete 3/3 oracle-matching signatures and consistent termination; complete
+sanitizer evidence may legitimately accompany exit 0,
+including recoverable UBSan. Post-patch replay rejects timeouts, signals, assertions, sanitizer findings,
+unsanitized crashes, and exits outside `{0, frozen dataset exit oracle}`.
+
+The landed events are `ProcedureExecution{Started,Finished}` + `ProcedureEvidence`, not
+the originally sketched `SecbCommandExecuted`. Default off ⇒ `NullProcedureExecutor` ⇒
+in-container agentic `secb`; its transcript and verdict files remain diagnostic.
+Build-Setup, Build-Executor, and Reporter remain agentic.
 
 ---
 
@@ -878,6 +1008,8 @@ the agentic path; Builder/Reporter roles are still agentic (no validator procedu
 | Image build | `deployment/build-secbench-tools.sh`, `deployment/secbench-tools.Dockerfile`, `deployment/push-study-images.sh` |
 | CVE instance / anti-leak fields | `plugins/security/cve_instance.py` |
 | Role catalog | `plugins/security/roles.py` |
+| Initial decomposition policy | `core/ports/decomposition_policy_port.py`, `plugins/security/decomposition_policy.py`, `core/application/services/orchestration/decomposition_contract.py` |
+| Recovery decomposition validation | `core/ports/decomposition_validator_port.py`, `plugins/security/decomposition_validator.py` |
 | Artifact contract | `plugins/security/deliverables.py` |
 | Drift tests | `plugins/security/tests/test_roles.py`, `test_prompt_building.py`, `test_prompt_normalization.py` |
 | Prompt strategy / branch detection | `plugins/security/prompt_strategy.py` |
@@ -885,7 +1017,7 @@ the agentic path; Builder/Reporter roles are still agentic (no validator procedu
 | Events / aggregates | `core/domain/events/events.py`, `core/domain/aggregates/agent_session.py`, `core/domain/shared_context.py` |
 | Event store / OCC | `infrastructure/adapters/postgres_event_store.py`, `infrastructure/sql/create_events_table.sql` |
 | Verification / retry | `core/application/services/orchestration/verification_pipeline.py`, `core/application/execution_service.py`, `config/settings.py` |
-| Evaluation / criteria | `experiments/shared/evaluation/{criteria,common,loading,models}.py`, `bef.py`, `linear.py` |
+| Evaluation / criteria | `experiments/shared/evaluation/{criteria,common,loading,models,official,combined_verdict,semantic_gate,confirmatory_runner}.py`, `adapters/`, `bef.py`, `linear.py` |
 | Composition root | `bootstrap/composition.py`, `bootstrap/infrastructure.py` |
 
 # Appendix B — Glossary
@@ -900,7 +1032,7 @@ the agentic path; Builder/Reporter roles are still agentic (no validator procedu
 | **Sealed dir** | `<run>.sealed/`, a sibling of the run root with no bind mount; holds `secb` + `secb-exec` |
 | **Builder baseline** | Local `arise-builder-baseline` commit of `repo_changes.diff`, so the Fixer's `git diff HEAD` carries only Fixer edits |
 | **Flat / hierarchical arm** | Single agent doing all phases vs BOSS→MANAGER→WORKER decomposition |
-| **Oracle** | `sanitizer_report` + `bug_report` — the expected failure the Exploiter must match (shown to the agent on purpose) |
+| **Oracle** | Solver-visible `sanitizer_report` plus evaluator-only `bug_report`; the latter is never rendered into solver prompts |
 | **OCC** | Optimistic concurrency control via `UNIQUE(aggregate_id, sequence_number)` |
 | **Wired / unwired** | Whether a `criteria.py` function is actually reached by a production consumer (`bef.py`/`linear.py`) |
 

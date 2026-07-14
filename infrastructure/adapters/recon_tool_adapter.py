@@ -144,7 +144,7 @@ class ReconToolAdapter:
         """Resolve a path relative to working directory, preventing escapes.
 
         Absolute domain paths may be mapped through run-scoped aliases
-        such as ``/src`` or ``/testcase``. Other paths must already be
+        such as ``/workspace``. Other paths must already be
         inside the working directory or be relative to it.
         """
         aliased = self._map_path_alias(path)

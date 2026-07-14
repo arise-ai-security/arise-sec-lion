@@ -92,6 +92,18 @@ class StubDomainPlugin:
     ):
         return None
 
+    def get_prompt_strategy(self):
+        return None
+
+    def get_decomposition_validator(self):
+        return None
+
+    def get_decomposition_policy(self):
+        return None
+
+    def get_procedure_executor(self):
+        return None
+
 
 class AsyncWorkerPort:
     def __init__(self, agent_id):
@@ -149,7 +161,7 @@ async def test_setup_working_directory_configures_recon_path_aliases(
     run_root = tmp_path / "run-root"
     aliases = (
         WorkspacePathAlias("/src", str(run_root / "src")),
-        WorkspacePathAlias("/testcase", str(run_root / "testcase")),
+        WorkspacePathAlias("/artifacts", str(run_root / "artifacts")),
     )
     domain_plugin = AsyncMock()
     domain_plugin.prepare_run.return_value = PreparedRunWorkspace(
@@ -293,13 +305,17 @@ async def test_create_boss_agent_emits_runtime_surface_sealed(tmp_path: Path) ->
     """When the domain plugin seals the runtime surface, the boss records the event."""
     # Given: a prepared workspace that reports a sealed runtime surface.
     sealed = SealedRuntimeSurface(
-        surface="secbench",
+        surface="sample",
         artifacts=(
             SealedRuntimeArtifact(
-                container_path="/testcase/repro.sh", kind="repro_skeleton", content_sha256="a" * 64
+                container_path="/artifacts/bootstrap.sh",
+                kind="bootstrap_script",
+                content_sha256="a" * 64,
             ),
             SealedRuntimeArtifact(
-                container_path="/usr/local/bin/secb", kind="secb_wrapper", content_sha256="b" * 64
+                container_path="/usr/local/bin/runner",
+                kind="runtime_wrapper",
+                content_sha256="b" * 64,
             ),
         ),
     )
@@ -313,14 +329,17 @@ async def test_create_boss_agent_emits_runtime_surface_sealed(tmp_path: Path) ->
     )
 
     # When:
-    await service.create_boss_agent("repro the CVE", domain_context=object())
+    await service.create_boss_agent("reproduce the issue", domain_context=object())
 
     # Then: the saved boss aggregate emitted exactly one RuntimeSurfaceSealed event.
     saved = service._repository.save_new_agent.await_args.args[0]
     sealed_events = [e for e in saved.events if isinstance(e, RuntimeSurfaceSealed)]
     assert len(sealed_events) == 1
-    assert sealed_events[0].surface == "secbench"
-    assert {a.kind for a in sealed_events[0].sealed_artifacts} == {"repro_skeleton", "secb_wrapper"}
+    assert sealed_events[0].surface == "sample"
+    assert {a.kind for a in sealed_events[0].sealed_artifacts} == {
+        "bootstrap_script",
+        "runtime_wrapper",
+    }
 
 
 @pytest.mark.asyncio

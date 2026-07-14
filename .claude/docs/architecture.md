@@ -1,5 +1,5 @@
 <!-- Read this when: adding/moving modules or directories, understanding system design, or determining where new code goes -->
-Hexagonal (ports-and-adapters) event-sourced multi-agent platform with strict dependency inversion, two event-sourced aggregates (`AgentSession` primary + `SharedStore`), and 38 frozen Pydantic domain events.
+Hexagonal (ports-and-adapters) event-sourced multi-agent platform with strict dependency inversion, two event-sourced aggregates (`AgentSession` primary + `SharedStore`), and 42 frozen Pydantic domain events.
 
 > **If you create, move, or delete a directory/module, update the directory tree in this file.**
 
@@ -25,17 +25,18 @@ arise-sec-lion/
 │   ├── config.{env}.yaml          # Environment overlay (development/dev/production)
 │   └── experiment-*.yaml          # Experiment-specific config overrides
 ├── core/                          # Domain core -- NEVER imports from infrastructure/
-│   ├── ports/                     # Protocol interfaces (18+ protocols across 7 files)
+│   ├── ports/                     # Protocol interfaces (18+ protocols across focused files)
 │   │   ├── event_store_port.py    # EventStoreConnectPort, WritePort, ReadPort, composite Port
 │   │   ├── runtime_ports.py       # LLMPort, WorkerToolPort, CostCalculatorPort, RealtimeCallbackPort, etc.
 │   │   ├── worker_port.py         # WorkerPort -- flat-mode single-agent worker (vs hierarchical WorkerToolPort)
 │   │   ├── domain_plugin_port.py  # DomainPlugin protocol + PreparedRunWorkspace, WorkerExecutionContext
+│   │   ├── decomposition_policy_port.py     # Deterministic initial decomposition plan port
 │   │   ├── decomposition_validator_port.py  # DecompositionValidator + verdict/violation values
 │   │   ├── shared_code_context_port.py      # SharedCodeContextPort (worker source-read/edit capture)
 │   │   └── procedure_ports.py     # ProcedureExecutorPort + NullProcedureExecutor (deterministic procedure tier)
 │   ├── domain/                    # Pure domain logic, zero external dependencies
 │   │   ├── aggregates/            # AgentSession -- primary aggregate (SharedStore is the 2nd, in shared_context.py)
-│   │   ├── events/                # 38 frozen Pydantic DomainEvent subclasses (events.py)
+│   │   ├── events/                # 42 frozen Pydantic DomainEvent subclasses (events.py)
 │   │   ├── values/                # AgentConfig, enums, NodeMessage, Subtask, HierarchyLimits, failure, procedure, etc.
 │   │   │   └── context/           # Contextual value objects
 │   │   ├── services/              # SubtaskParser, TaskScheduler, ConfigResolver, ContextUpdateParser
@@ -84,6 +85,9 @@ arise-sec-lion/
 │   └── security/                  # SecurityDomainPlugin + SecBenchPromptStrategy
 │       ├── plugin.py              # SecurityDomainPlugin (implements DomainPlugin protocol)
 │       ├── prompt_strategy.py     # SecBenchPromptStrategy (implements PromptStrategy protocol)
+│       ├── decomposition_policy.py # SEC-bench phase/role plan; implements the generic core port
+│       ├── decomposition_validator.py # LLM recovery selection constraints and repair
+│       ├── roles.py               # SEC-bench role catalog and dependency metadata
 │       ├── cve_instance.py        # CVEInstance value object (opaque domain context)
 │       ├── cve_inference.py       # Infers CVEInstance from task text
 │       ├── container_runtime.py   # SecurityContainerRuntime protocol + SecBenchWorkspace/Session
@@ -179,7 +183,7 @@ The pre-commit hook `scripts/check_architecture_boundaries.py` enforces the `cor
 
 ### Domain (`core/domain/`)
 
-`AgentSession` (`core/domain/aggregates/agent_session.py`) is the **primary aggregate** (mutated by 35 of the 38 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types) sharing the events table via a `uuid5`-derived `aggregate_id`. All mutable state is derived by replaying frozen Pydantic `DomainEvent` instances. The replay mechanism uses `functools.singledispatchmethod` for `_apply`, dispatching on event type.
+`AgentSession` (`core/domain/aggregates/agent_session.py`) is the **primary aggregate** (mutated by 39 of the 42 event types); `SharedStore` (`core/domain/shared_context.py`) is a second event-sourced aggregate (3 event types) sharing the events table via a `uuid5`-derived `aggregate_id`. All mutable state is derived by replaying frozen Pydantic `DomainEvent` instances. The replay mechanism uses `functools.singledispatchmethod` for `_apply`, dispatching on event type.
 
 Optimistic concurrency control: the event store enforces a unique constraint on `(aggregate_id, sequence_number)`. Version mismatch raises `ConcurrencyError`; the system loop retries.
 
@@ -196,14 +200,16 @@ Key value objects in `core/domain/values/`: `AgentConfig` (LLM config per agent)
 
 ### Ports (`core/ports/`)
 
-18+ Protocol interfaces in 7 files. The event store follows ISP (Interface Segregation Principle) -- clients depend on the narrowest interface they need.
+The port layer follows ISP (Interface Segregation Principle): clients depend on the
+narrowest interface they need.
 
 | File | Protocols | Design note |
 |------|-----------|-------------|
 | `event_store_port.py` | `EventStoreConnectPort`, `EventStoreWritePort`, `EventStoreReadPort`, composite `EventStorePort` | ISP split so read-only clients (projections, API) use `EventStoreReadPort` only |
 | `runtime_ports.py` | `LLMPort`, `WorkerToolPort`, `CostCalculatorPort`, `RealtimeCallbackPort`, `SharedContextPort`, `SiblingViewPort`, `SystemLimitsPort`, `Toolset`, `ReconToolPort` | Consolidated because each is small. `ReconToolPort` extends `Toolset`. |
 | `worker_port.py` | `WorkerPort` | Flat-mode single-agent worker (one process runs all phases). Distinct from the hierarchical `WorkerToolPort`; implementations live in `infrastructure/workers/` |
-| `domain_plugin_port.py` | `DomainPlugin` | Separate file because it carries `PreparedRunWorkspace` and `WorkerExecutionContext` frozen dataclasses. Adds `get_procedure_executor()` for the deterministic tier |
+| `domain_plugin_port.py` | `DomainPlugin` | Carries `PreparedRunWorkspace` and `WorkerExecutionContext`; exposes prompt, initial-decomposition, validation, and procedure seams without importing a concrete plugin |
+| `decomposition_policy_port.py` | `InitialDecompositionPolicy` + frozen `InitialDecomposition`/`InitialSubtask` values | A domain plugin may supply a deterministic initial control plan. The policy never interprets failure evidence |
 | `decomposition_validator_port.py` | `DecompositionValidator` + `DecompositionVerdict`/`DecompositionViolation`/`SuggestedSubtask` values | Domain plugins validate/repair LLM decompositions against a role catalog |
 | `shared_code_context_port.py` | `SharedCodeContextPort` | Capture worker source reads/edits for the shared code-prefix cache |
 | `procedure_ports.py` | `ProcedureExecutorPort` (`match`/`resolve`/`execute`) + `NullProcedureExecutor` default | Deterministic procedure tier; `execute` runs host-side and returns a `ProcedureResult`. Null default => agentic-only |
@@ -214,8 +220,8 @@ Key value objects in `core/domain/values/`: `AgentConfig` (LLM config per agent)
 
 | Method | Input role | What it does |
 |--------|-----------|--------------|
-| `assess_task` | PENDING | Single LLM call (optionally with tool-calling loop) decides execute (-> WORKER) or decompose (-> MANAGER + children) |
-| `evaluate_task` | BOSS or MANAGER | LLM decomposes task -> `SubtasksDefined` -> spawn `ChildSpawned` events |
+| `assess_task` | PENDING | Uses the Host's initial policy when one applies; otherwise a single LLM call decides execute (-> WORKER) or decompose (-> MANAGER + children) |
+| `evaluate_task` | BOSS or MANAGER | Uses the Host's deterministic initial route when one applies; only Manager recovery after child failure asks the LLM to revise a route |
 | `execute_task` | WORKER | Delegates to `WorkerToolPort.run_session()` -> streams events -> runs `VerificationPipeline` |
 
 **`AgentExecutionService`** (`core/application/execution_service.py`) runs the system loop: poll for active agents, dispatch each via `run_agent_step`, manage concurrency via `asyncio.Semaphore`, handle retries and timeouts. One step = load aggregate -> dispatch action -> persist events -> handle post-step (spawn children, notify parents).
@@ -338,9 +344,9 @@ main.py -> bootstrap.main() -> _run_task()
           -> run_agent_step(agent_id)
             -> load AgentSession from events (AgentRepository)
             -> dispatch by role (RoleDispatch):
-                BOSS     -> evaluate_task -> LLM decomposes -> SubtasksDefined + ChildSpawned
-                PENDING  -> assess_task   -> LLM decides    -> WORKER or MANAGER+children
-                MANAGER  -> evaluate_task -> LLM decomposes -> SubtasksDefined + ChildSpawned
+                BOSS     -> evaluate_task -> Host initial route; no semantic recovery
+                PENDING  -> assess_task   -> Host phase route when prescribed, else LLM assessment
+                MANAGER  -> evaluate_task -> Host initial compact route, or LLM recovery route
                 WORKER   -> execute_task  -> dispatch ladder: host procedure (deterministic) OR WorkerToolPort (agentic) -> verify
             -> persist uncommitted events (OCC via append_batch)
             -> handle post-step (spawn children, notify parent, retry if failed)
@@ -374,8 +380,17 @@ Read side:
 
 ```
 evaluate_task(BOSS/MANAGER)
-  -> LLM response parsed into list[Subtask] (SubtaskParser)
+  -> initial SEC-bench decomposition:
+       InitialDecompositionPolicy supplies the deterministic root phase DAG / compact route
+       B3 include_manager_layer=false flattens that same DAG in generic core
+  -> recovery after required failure:
+       Manager LLM response parsed into list[Subtask] (SubtaskParser)
+       DecompositionValidator drops unsafe choices and closes hard dependencies
+       full remaining same-phase expansion only if the decision is explicitly invalid
   -> _check_limit_violations (max_children_per_node, max_total_agents)
+  -> bind trusted catalog role prompt/model/procedure
+  -> record PhaseRouteSelected task_sources per role: host_policy / llm / host_repair
+     and propagate Manager evidence_references through Subtask -> child Briefing -> worker prompt
   -> agent.apply_subtasks_and_spawn_children()
     -> emits SubtasksDefined event
     -> emits ChildSpawned event per subtask (role=PENDING or forced WORKER)
@@ -429,20 +444,21 @@ Deterministic, LLM-free resilience layered on top of `RetryPolicy`. Turns an opa
 WORKER raises / returns failure
   -> worker adapter attaches a bounded traceback (describe_error, ~1.5 KB)
      to the failure reason           (infrastructure/adapters/worker/shared/errors.py)
-  -> execution_service._handle_post_step: role==WORKER && no verification_feedback && failure_digest is None
+  -> PostStepHandler: role==WORKER && no verification_feedback && failure_digest is None
        -> digest = build_failure_digest(agent)      # LLM-free; FAILURE / LAST TOOL CALLS / ATTEMPT, cap 4000
        -> agent.record_failure_digest(digest, "worker_crash")   # FailureDigestRecorded (best-effort)
   -> _maybe_retry_worker: retry if (verification_feedback OR failure_digest), budget verification_max_retries
        -> RetryScheduled (digest + feedback retained) -> retry prompt gains "## Previous Attempt Failure (Retry)"
   -> if the worker still fails as one of N sibling children:
-       parent.handle_child_failure(child_id, reason, child_task, digest, max_redecompositions)
+       ParentNotificationService passes max_redecompositions only for a MANAGER
+       parent.handle_child_failure(child_id, reason, child_task, digest, manager_budget)
          -> ChildFailed (enriched) -> ChildFailureRecord kept in failed_children
          -> ALL children failed?
-              budget left -> trigger_redecomposition: failure_history <- failed_children
+              MANAGER budget left -> trigger_redecomposition: failure_history <- failed_children
                              -> RedecompositionTriggered -> parent re-plans with a
                                 <previous_attempt_failures> block (prompts/operations/decomposition_variable.j2,
                                 the volatile tail; cached prompt prefix stays byte-identical)
-              no budget   -> WorkFailed (propagate up)
+              BOSS/non-Manager or no Manager budget -> WorkFailed (propagate up)
 ```
 
 ### 7. Procedural Dispatch Ladder (deterministic tier; `settings.orchestration.procedural_dispatch`)
@@ -451,22 +467,30 @@ Flag-gated. Default off binds `NullProcedureExecutor`, so `_resolve_procedure_re
 
 ```
 execute_task(WORKER)
-  -> agent_orchestrator._resolve_procedure_ref(agent) reads subtask.execution_mode + procedure_ref:
-       "agentic"                         -> None            (bypass; always agentic)
-       "procedural" + executor.resolve(ref) -> ref
-       "procedural" + unknown ref        -> None + warning  (fail open -> auto)
-       "auto"                            -> executor.match(task, domain_context)   (may be None)
+  -> agent_orchestrator._resolve_procedure_ref(agent):
+       ref = executor.match(task, domain_context)  # Host registry only
+       matched ref + executor.resolve(ref)         -> trusted ref
+       no match or stale ref                       -> None (agentic)
+       subtask execution_mode/procedure_ref/params -> ignored as dispatch authority
   -> ref is None  -> agentic path: WorkerToolPort.run_session -> stream events -> VerificationPipeline
-  -> ref present  -> deterministic path (zero LLM turns: no prompt, no worker session, no cost events):
-       agent.start_procedure(ref)                # ProcedureExecutionStarted; last_attempt_procedural=True
-       result = executor.execute(ref, task, domain_context, {root_id from hierarchy_limits, ...})
+  -> ref present and procedure_attempted=False -> initial Host attempt (zero LLM turns):
+       agent.start_procedure(ref)                # ProcedureExecutionStarted;
+                                                 # procedure_attempted=True,
+                                                 # last_attempt_procedural=True
+       result = executor.execute(ref, task, domain_context, {root_id from hierarchy_limits})
        agent.finish_procedure(ref, success, summary, evidence)   # ProcedureExecutionFinished (host evidence)
        success -> complete_with_result(summary)  # WorkCompleted -> normal VerificationPipeline
        failure -> record_failure_digest(digest, "procedure_failure") + fail_with_reason   # WorkFailed
-  -> escalation (execution_service._handle_post_step):
-       failed procedural attempt (last_attempt_procedural && retry_count==0)
-         -> schedule_retry: exactly one guaranteed AGENTIC retry (dispatch never routes procedural twice),
-            the agentic retry prompt carrying the procedure's digest
+  -> first Host failure (procedure_attempted && last_attempt_procedural && retry_count==0):
+       PostStepHandler -> agent.schedule_retry -> exactly one agentic repair carrying the procedure digest
+  -> agentic repair:
+       CodeGenerationStarted          # last_attempt_procedural=False; procedure_attempted remains True
+       repair WorkFailed              -> terminal parent notification; no Host recheck
+       repair WorkCompleted           -> suppress provisional WorkCompleted and run exactly one Host recheck
+  -> Host recheck:
+       ProcedureExecutionStarted/Finished with fresh Host evidence
+       success -> complete_with_result(summary) -> VerificationPipeline
+       failure -> WorkFailed -> terminal parent notification; no further LLM retry
 ```
 
 ## Agent Hierarchy and Roles

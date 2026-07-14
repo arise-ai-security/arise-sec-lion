@@ -1,0 +1,12 @@
+study_id: b3-direct-compact
+created_at: 2026-07-12T00:00:00+00:00
+hypothesis: >
+  Ablation B3 removes B4's four phase managers while preserving B4's initial
+  dependency-closed compact route: the same five LLM role workers, four host
+  procedures, worker prompts, model routing, tools, context policy, and budgets.
+  The intended treatment difference is the phase-manager layer.
+dataset: ../b4-boss-manager-worker/dataset.yaml
+replicates: 1
+cells:
+  B3: {group: B, runner: arise, config: configs/B3-direct-compact.yaml}
+headline_cells: [B3]

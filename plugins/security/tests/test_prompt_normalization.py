@@ -1,13 +1,13 @@
-"""Prompt-normalization invariants for the BEF 4-arm comparison.
+"""Prompt-normalization invariants for flat and hierarchical execution.
 
-The flat baseline and the BEF workers must share ONE task-spec so every arm
+The flat baseline and hierarchical workers must share one task specification so every topology
 emits byte-identical ``/testcase/`` artifacts. This is enforced structurally:
-both consumers ``{% include %}`` the same per-phase partials under
+the flat prompt and whole-phase worker fallbacks ``{% include %}`` the same per-phase partials under
 ``prompts/domains/secbench/phases/``. These tests prove the two properties
 that comparability rests on:
 
-(a) each phase's deliverable+gate block is BYTE-IDENTICAL between the flat
-    prompt and the matching BEF worker branch, and
+(a) each whole-phase worker fallback's deliverable+gate block is byte-identical
+    to the matching block in the flat prompt, and
 (b) the flat prompt carries ZERO sibling/peer/handoff wording — the
     single-agent baseline cannot contain tree-topology coordination language.
 """
@@ -46,13 +46,14 @@ def _prompts_dir() -> Path:
 
 PROMPTS_DIR = _prompts_dir()
 
-# Maps each BEF worker branch bracket to the shared phase partial it includes.
+# Explicit role labels use focused role templates. Only these legacy whole-phase labels include
+# the complete shared phase partial.
 _BRANCH_TO_PHASE = (
     ("[Builder]", "build"),
     ("[Exploiter]", "exploit"),
     ("[Fixer]", "fix"),
-    ("[Reporter]", "report"),
 )
+_ALL_PHASES = ("build", "exploit", "fix", "report")
 
 
 def _cve() -> CVEInstance:
@@ -103,11 +104,11 @@ def _render_phase_partial(builder: PromptBuilder, cve: CVEInstance, phase: str) 
     )
 
 
-class TestPhaseBlocksAreByteIdenticalAcrossArms:
-    """Each phase's deliverable+gate block is identical in flat and BEF worker."""
+class TestPhaseBlocksAreByteIdenticalAcrossTopologies:
+    """Each whole-phase fallback shares its deliverable block with flat execution."""
 
     def test_each_phase_partial_is_verbatim_in_flat_and_worker(self) -> None:
-        # Given: a flat prompt and one BEF worker prompt per branch, all on the
+        # Given: a flat prompt and one whole-phase worker prompt per branch, all on the
         # same CVE, built through PromptBuilder + SecBenchPromptStrategy.
         builder = _builder()
         cve = _cve()
@@ -144,18 +145,23 @@ class TestPhaseBlocksAreByteIdenticalAcrossArms:
             )
 
         # And: the blocks are non-trivial (the gate text is actually rendered).
-        for _, phase in _BRANCH_TO_PHASE:
+        for phase in _ALL_PHASES:
             assert len(_render_phase_partial(builder, cve, phase)) > 200
 
     def test_each_phase_partial_has_numbered_goal_and_step_headings(self) -> None:
         # Given: the shared phase partials used by flat and worker prompts.
         builder = _builder()
         cve = _cve()
+        builder_prompt = builder.build_worker_prompt(
+            task_description="[Builder] build the supplied baseline",
+            domain_context=cve,
+            briefing=None,
+        )
 
         # When: rendering each phase partial directly.
         blocks = {
             phase: _render_phase_partial(builder, cve, phase)
-            for _, phase in _BRANCH_TO_PHASE
+            for phase in _ALL_PHASES
         }
 
         # Then: each phase presents its goal as a numbered list.
@@ -178,6 +184,8 @@ class TestPhaseBlocksAreByteIdenticalAcrossArms:
             in blocks["build"]
         )
         assert ARTIFACT_PATHS["binary_paths"] in blocks["build"]
+        assert "Use the exact supplied base commit" in builder_prompt
+        assert "If a more suitable commit exists" not in builder_prompt
         assert "Treat `/usr/local/bin/secb build()` as an optional reference/helper" not in blocks[
             "build"
         ]

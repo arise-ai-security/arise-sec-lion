@@ -50,6 +50,8 @@ _KLEE_PROBE_CMD = "command -v klee"
 _KLEE_INSTALL_CMD = "apt-get update && apt-get install -y klee"
 
 _DEFAULT_TIMEOUT_SECONDS = 600
+_IN_CONTAINER_PYTHON = "/opt/arise-mcp/venv/bin/python"
+_IN_CONTAINER_PYTHONPATH = "/opt/arise-mcp"
 
 mcp = FastMCP("arise-secbench-tools")
 
@@ -96,6 +98,12 @@ def build_stdio_config(
         "command": python_executable,
         "args": ["-m", "plugins.security.mcp.security_tools_server"],
         "env": env,
+        "in_container": {
+            "command": _IN_CONTAINER_PYTHON,
+            "args": ["-m", "plugins.security.mcp.security_tools_server"],
+            "remove_env": [ENV_HELPER_SCRIPT],
+            "env": {"PYTHONPATH": _IN_CONTAINER_PYTHONPATH},
+        },
     }
 
 
@@ -148,7 +156,7 @@ def _read_env() -> tuple[str | None, str | None, str | None] | dict[str, Any]:
       on the host. Commands are routed into the per-run secb-tools container
       via the ``secb-exec`` helper, which does ``docker exec``.
     - **In-container mode** (helper script unset): the MCP server runs *inside*
-      the secb-tools container alongside the agent (Cell A). Commands execute
+      the secb-tools container alongside a flat in-container agent. Commands execute
       directly via ``bash -lc`` — no ``docker exec`` hop, since we're already
       in the target container.
 

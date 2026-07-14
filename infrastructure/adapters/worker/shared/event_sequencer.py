@@ -129,6 +129,9 @@ class EventSequencer:
         usage_metrics: list[WorkerUsageMetrics] | None = None,
         container_id: str | None = None,
         conversation_id: str | None = None,
+        complete: bool = True,
+        termination_reason: str = "completed",
+        usage_missing: bool = False,
     ) -> WorkerCostRecorded:
         """Create a WorkerCostRecorded event and increment sequence.
 
@@ -166,6 +169,9 @@ class EventSequencer:
             duration_seconds=duration_seconds,
             container_id=container_id,
             conversation_id=conversation_id,
+            complete=complete,
+            termination_reason=termination_reason,
+            usage_missing=usage_missing,
         )
         self._sequence += 1
         return event

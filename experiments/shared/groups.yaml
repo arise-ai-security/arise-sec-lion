@@ -1,8 +1,5 @@
 # Project-wide display groups for cell aggregation.
 # Keyed by single uppercase letter A-Z. Referenced by `cells.<name>.group`
 # in every study's manifest.yaml. Unknown keys fail manifest validation.
-A: Claude Code CLI
 B: Our System
-C: Our System + Qwen
 N: Naive OpenHands
-# Add D, E, ... as new approaches are introduced.

@@ -20,7 +20,7 @@ class ProcedureExecutorPort(Protocol):
         ...
 
     def resolve(self, procedure_ref: str) -> bool:
-        """True iff the ref names a registered procedure (validates LLM markings)."""
+        """True iff a Host-matched ref still names a registered procedure."""
         ...
 
     async def execute(

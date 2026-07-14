@@ -1,6 +1,6 @@
 """Worker cost knobs on the OpenHands adapter.
 
-Three independent levers, all default-off / default-None so the adapter is
+Four independent levers, all default-off / default-None so the adapter is
 byte-identical to today unless configured:
 
 * run-scoped prompt_cache_key — pre-pin the SDK's OpenAI cache key to the run
@@ -8,6 +8,8 @@ byte-identical to today unless configured:
   otherwise pins per-conversation, defeating cross-worker reuse);
 * reasoning_effort (+ task-prefix overrides) — the SDK default is "high", the
   dominant completion-token cost on reasoning models;
+* task-prefix model overrides — route analysis/synthesis roles to a stronger
+  worker model while coding/execution roles retain the configured base model;
 * directory-listing capture skip — keep ``view``-on-directory snapshots out of
   the shared code block.
 
@@ -26,6 +28,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from core.domain.events.events import WorkerCostRecorded
 from core.domain.values.node_message import WORKER_CONCLUSION_MARKER
 from infrastructure.adapters.worker.openhands_adapter import OpenHandsAdapter
 from infrastructure.adapters.worker.shared import EventSequencer
@@ -105,16 +108,16 @@ class TestReasoningEffort:
         # Given: a default effort and a per-branch override
         adapter = _adapter(
             reasoning_effort="low",
-            reasoning_effort_overrides={"[Exploiter]": "medium"},
+            reasoning_effort_overrides={"[Analysis]": "medium"},
         )
 
         # When / Then: first matching prefix wins; otherwise the default
         assert (
-            adapter._resolve_reasoning_effort({"task_summary": "[Exploiter] build a PoC"})
+            adapter._resolve_reasoning_effort({"task_summary": "[Analysis] inspect the artifact"})
             == "medium"
         )
         assert (
-            adapter._resolve_reasoning_effort({"task_summary": "[Builder] compile it"}) == "low"
+            adapter._resolve_reasoning_effort({"task_summary": "[Execution] compile it"}) == "low"
         )
         assert adapter._resolve_reasoning_effort({}) == "low"
 
@@ -123,7 +126,75 @@ class TestReasoningEffort:
         adapter = _adapter()
 
         # When / Then: None = keep the SDK default
-        assert adapter._resolve_reasoning_effort({"task_summary": "[Builder] x"}) is None
+        assert adapter._resolve_reasoning_effort({"task_summary": "[Execution] x"}) is None
+
+
+class TestModelRouting:
+    def test_override_matches_task_prefix(self) -> None:
+        # Given: a default worker model and reasoning-role overrides
+        adapter = _adapter(
+            model_overrides={
+                "[Analysis]": "gpt-5.3-codex",
+                "[Summary]": "gpt-5.3-codex",
+            }
+        )
+
+        # When/Then: reasoning roles use Codex; coding roles keep the base model
+        assert (
+            adapter._resolve_model({"task_summary": "[Analysis] find the cause"})
+            == "gpt-5.3-codex"
+        )
+        assert adapter._resolve_model({"task_summary": "[Summary] synthesize"}) == "gpt-5.3-codex"
+        assert adapter._resolve_model({"task_summary": "[Execution] compile"}) == "openai/gpt-4o"
+        assert adapter._resolve_model({}) == "openai/gpt-4o"
+
+    def test_effective_model_reaches_llm_kwargs(self) -> None:
+        # Given: an adapter whose task route selected the reasoning model
+        adapter = _adapter()
+
+        # When
+        kwargs = adapter._build_llm_kwargs(model="gpt-5.3-codex")
+
+        # Then
+        assert kwargs["model"] == "gpt-5.3-codex"
+
+    async def test_effective_model_drives_conversation_and_cost_event(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given: a reasoning-role worker and a completed OpenHands conversation
+        adapter = _adapter(
+            timeout_seconds=1,
+            model_overrides={"[Analysis]": "gpt-5.3-codex"},
+        )
+        conversation = _FakeConversation()
+        conversation.conversation_stats = None
+        captured: dict[str, str | None] = {}
+
+        def fake_build(*args: Any) -> _FakeConversation:
+            captured["model"] = args[6]
+            return conversation
+
+        monkeypatch.setattr(adapter, "_build_conversation", fake_build)
+
+        # When
+        events = [
+            event
+            async for event in adapter.run_session(
+                {
+                    "task_description": "Find the root cause",
+                    "task_summary": "[Analysis] inspect the failure",
+                    "agent_id": uuid4(),
+                    "working_directory": str(tmp_path),
+                }
+            )
+        ]
+
+        # Then: both the SDK construction and cost provenance use the selected model
+        cost = next(event for event in events if isinstance(event, WorkerCostRecorded))
+        assert captured["model"] == "gpt-5.3-codex"
+        assert cost.model == "gpt-5.3-codex"
 
 
 class _SpySharedCodePort:
@@ -132,7 +203,14 @@ class _SpySharedCodePort:
     def __init__(self) -> None:
         self.views: list[str] = []
 
-    async def record_view(self, root_id: UUID, agent_id: UUID, path: str, content: str) -> None:
+    async def record_view(
+        self,
+        root_id: UUID,
+        agent_id: UUID,
+        path: str,
+        content: str,
+        **capture: Any,
+    ) -> None:
         self.views.append(path)
 
     async def record_edit(self, root_id: UUID, agent_id: UUID, path: str) -> None:
@@ -159,8 +237,8 @@ def _view_event(path: str, text: str) -> Any:
 
 
 _DIR_LISTING = (
-    "Here's the files and directories up to 2 levels deep in /testcase, "
-    "excluding hidden items:\n/testcase/a\n/testcase/b"
+    "Here's the files and directories up to 2 levels deep in /artifacts, "
+    "excluding hidden items:\n/artifacts/a\n/artifacts/b"
 )
 
 
@@ -174,7 +252,7 @@ class TestDirectoryListingCaptureSkip:
         assert capture is not None
 
         # When
-        async for _ in adapter._capture_file_tool(_view_event("/testcase", _DIR_LISTING), capture):
+        async for _ in adapter._capture_file_tool(_view_event("/artifacts", _DIR_LISTING), capture):
             pass
         async for _ in adapter._capture_file_tool(_view_event("/src/a.c", "int x;"), capture):
             pass
@@ -191,11 +269,11 @@ class TestDirectoryListingCaptureSkip:
         assert capture is not None
 
         # When
-        async for _ in adapter._capture_file_tool(_view_event("/testcase", _DIR_LISTING), capture):
+        async for _ in adapter._capture_file_tool(_view_event("/artifacts", _DIR_LISTING), capture):
             pass
 
         # Then: legacy behavior — directory snapshots are captured
-        assert port.views == ["/testcase"]
+        assert port.views == ["/artifacts"]
 
 
 class TestCompletedResultSanitization:
@@ -203,7 +281,7 @@ class TestCompletedResultSanitization:
         # Given: a finish message that leaked a host workspace path
         adapter = _adapter()
         session = _container_session(tmp_path)
-        host_report = f"{tmp_path / 'testcase' / 'report.md'}"
+        host_report = f"{tmp_path / 'artifacts' / 'report.md'}"
         conversation = _FakeConversation()
 
         # When
@@ -216,6 +294,6 @@ class TestCompletedResultSanitization:
         )
 
         # Then: the result speaks container paths, never host paths
-        assert "/testcase/report.md" in event.result
+        assert "/artifacts/report.md" in event.result
         assert str(tmp_path) not in event.result
         assert WORKER_CONCLUSION_MARKER in event.result

@@ -33,7 +33,7 @@ def _make_spec(prompt: str = "task body") -> TaskPromptSpec:
     return TaskPromptSpec(
         rendered_prompt=prompt,
         prompt_sha="0" * 64,
-        cve_context=None,
+        domain_context=None,
         task="t",
     )
 
@@ -310,7 +310,7 @@ def test_run_task_emits_one_disallowed_flag_per_tool(
 def test_run_task_emits_single_disallowed_flag_when_policy_has_one_tool(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
-    """A single-tool exclusion (the A2 case today) emits one --disallowedTools pair."""
+    """A single-tool exclusion emits one --disallowedTools pair."""
     # Given: a stubbed `claude` binary path and a captured create_subprocess_exec.
     monkeypatch.setattr(
         "infrastructure.workers.claude_code_worker.shutil.which",
@@ -431,7 +431,7 @@ def test_run_task_writes_settings_json_with_bash_allowlist(
         worker.run_task(
             run_id=run_id,
             spec=_make_spec(),
-            tool_policy=_make_policy(bash_cmds=("valgrind", "klee")),
+            tool_policy=_make_policy(bash_cmds=("analyze", "verify")),
             timeouts=TimeoutBudget(per_worker_call=30, per_run_total=60),
             workspace=_make_workspace(tmp_path),
         )
@@ -440,7 +440,7 @@ def test_run_task_writes_settings_json_with_bash_allowlist(
     # Then: the scratch settings.json mirrors the bash allowlist.
     assert len(settings_payloads) == 1
     payload = settings_payloads[0]
-    assert payload == {"permissions": {"allow": ["Bash(valgrind)", "Bash(klee)"]}}
+    assert payload == {"permissions": {"allow": ["Bash(analyze)", "Bash(verify)"]}}
 
 
 def test_run_task_emits_empty_allowlist_when_policy_has_no_bash_commands(
@@ -482,7 +482,7 @@ def test_run_task_emits_empty_allowlist_when_policy_has_no_bash_commands(
 def test_run_task_can_use_global_claude_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
-    """A-cells may use the operator/global Claude config while preserving CLI policy."""
+    """Flat runs may use the operator/global Claude config while preserving CLI policy."""
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
     monkeypatch.setattr(
@@ -744,12 +744,12 @@ def test_run_task_writes_mcp_config_and_threads_flag_when_extras_present(
         root=tmp_path,
         extras={
             "mcp_servers": {
-                "security_tools": {
+                "custom_tools": {
                     "command": "python",
-                    "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                    "args": ["-m", "plugin.tools"],
                     "env": {
-                        "ARISE_SECBENCH_CONTAINER_ID": "abc123",
-                        "ARISE_SECBENCH_HELPER_SCRIPT": "/run/secb-exec",
+                        "CONTAINER_ID": "abc123",
+                        "HOST_HELPER": "/run/exec",
                     },
                 }
             }
@@ -777,10 +777,10 @@ def test_run_task_writes_mcp_config_and_threads_flag_when_extras_present(
     # And: the JSON file is on disk wrapped in the camelCase envelope.
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert "mcpServers" in payload
-    assert "security_tools" in payload["mcpServers"]
-    server_spec = payload["mcpServers"]["security_tools"]
+    assert "custom_tools" in payload["mcpServers"]
+    server_spec = payload["mcpServers"]["custom_tools"]
     assert server_spec["command"] == "python"
-    assert server_spec["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123"
+    assert server_spec["env"]["CONTAINER_ID"] == "abc123"
 
 
 def test_run_task_omits_mcp_config_when_extras_lacks_servers(
@@ -825,17 +825,17 @@ def _container_session_extras(tmp_path: Path) -> dict[str, object]:
     return {
         "container_session": {
             "container_id": "abc123def456",
-            "container_name": "secbench-worker-demo",
-            "image": "secb-tools:demo",
+            "container_name": "plugin-worker-demo",
+            "image": "plugin-tools:demo",
             "workspace_root": str(tmp_path),
             "host_source_dir": str(tmp_path / "src"),
-            "host_testcase_dir": str(tmp_path / "testcase"),
+            "host_artifact_dir": str(tmp_path / "artifacts"),
             "host_work_dir": str(tmp_path / "src" / "demo"),
             "container_source_dir": "/src",
-            "container_testcase_dir": "/testcase",
+            "container_artifact_dir": "/artifacts",
             "container_working_directory": "/src/demo",
             "container_workspace_root": "/arise-run",
-            "helper_script": str(tmp_path / "secb-exec"),
+            "helper_script": str(tmp_path / "container-exec"),
         }
     }
 
@@ -894,7 +894,7 @@ def test_run_task_in_container_does_not_probe_host_path_for_claude(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: UUID
 ) -> None:
     """In containerized mode, ``shutil.which("claude")`` is never consulted —
-    the binary lives inside the secb-tools image."""
+    the binary lives inside the plugin image."""
     # Given: shutil.which would return None (no host claude); env is set.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
     monkeypatch.setattr(
@@ -1062,8 +1062,8 @@ def test_run_task_in_container_rewrites_mcp_config_for_in_container_execution(
 ) -> None:
     """In containerized mode the host-side stdio config is rewritten so the
     MCP server runs inside the same container as the agent: the command is
-    swapped to the bundled in-container Python, ``ARISE_SECBENCH_HELPER_SCRIPT``
-    is dropped (server takes the in-container code path), and
+    swapped to the declared in-container command, the host-only environment
+    entry is dropped, and
     ``--mcp-config`` points at the container-side path."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
     captured: dict[str, object] = {}
@@ -1080,13 +1080,18 @@ def test_run_task_in_container_rewrites_mcp_config_for_in_container_execution(
     worker = ClaudeCodeWorker()
     extras = dict(_container_session_extras(tmp_path))
     extras["mcp_servers"] = {
-        "security_tools": {
+        "custom_tools": {
             "command": "python",
-            "args": ["-m", "plugins.security.mcp.security_tools_server"],
+            "args": ["-m", "host_tools"],
             "env": {
-                "ARISE_SECBENCH_HELPER_SCRIPT": str(tmp_path / "secb-exec"),
-                "ARISE_SECBENCH_CONTAINER_ID": "abc123def456",
-                "ARISE_SECBENCH_WORK_DIR": "/src/demo",
+                "HOST_HELPER": str(tmp_path / "exec"),
+                "CONTAINER_ID": "abc123def456",
+            },
+            "in_container": {
+                "command": "/opt/tools/python",
+                "args": ["-m", "container_tools"],
+                "remove_env": ["HOST_HELPER"],
+                "env": {"PYTHONPATH": "/opt/tools"},
             },
         },
     }
@@ -1112,12 +1117,12 @@ def test_run_task_in_container_rewrites_mcp_config_for_in_container_execution(
 
     # Verify the JSON written on the host has the rewritten command + env.
     written = json.loads((tmp_path / "mcp_servers.in_container.json").read_text())
-    server = written["mcpServers"]["security_tools"]
-    assert server["command"] == "/opt/arise-mcp/venv/bin/python"
-    assert server["args"] == ["-m", "plugins.security.mcp.security_tools_server"]
-    assert "ARISE_SECBENCH_HELPER_SCRIPT" not in server["env"]
-    assert server["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
-    assert server["env"]["PYTHONPATH"] == "/opt/arise-mcp"
+    server = written["mcpServers"]["custom_tools"]
+    assert server["command"] == "/opt/tools/python"
+    assert server["args"] == ["-m", "container_tools"]
+    assert "HOST_HELPER" not in server["env"]
+    assert server["env"]["CONTAINER_ID"] == "abc123def456"
+    assert server["env"]["PYTHONPATH"] == "/opt/tools"
 
 
 def test_run_task_in_container_with_global_config_skips_scratch_dir(
@@ -1243,13 +1248,13 @@ def test_cost_event_aliases_reasoning_to_thinking() -> None:
 
 
 def test_tool_use_events_populate_structured_tool_name(tmp_path: Path, run_id: UUID) -> None:
-    """Pins audit N-6 fix: ``ThoughtCaptured`` rows from the Claude Code stream
+    """Pins the structured-tool-name regression: Claude Code ``ThoughtCaptured`` rows
     expose the canonical tool name on the structured ``tool_name`` field, so
     downstream analysis no longer has to parse the rendered content prefix.
 
     Also pins the content rendering invariant -- ``prefixes.recover_tool_name``
     relies on the leading ``"Running: "`` / ``"Reading: "`` prefix for historic
-    A1/A2 data, so the human-readable description must remain intact.
+    rows, so the human-readable description must remain intact.
     """
 
     # Given: a Claude Code stream-json transcript containing one Bash tool_use
@@ -1305,12 +1310,12 @@ def test_tool_use_events_populate_structured_tool_name(tmp_path: Path, run_id: U
     assert read_event.tool_name == "Read"
 
     # And: the rendered content still carries the human-readable prefix so the
-    # ``prefixes.recover_tool_name`` recovery layer keeps working for the
-    # historic A1/A2 data that pre-dates this fix.
+    # ``prefixes.recover_tool_name`` recovery layer keeps working for rows that
+    # pre-date this fix.
     assert bash_event.content.startswith("Running: ")
     assert read_event.content.startswith("Reading: ")
 
     # And: the stream identifier still tags the row as the Claude Code CLI
-    # path so analysis can distinguish A1/A2 from B-family SDK rows.
+    # path so analysis can distinguish CLI rows from SDK rows.
     assert bash_event.stream == "claude_code"
     assert read_event.stream == "claude_code"

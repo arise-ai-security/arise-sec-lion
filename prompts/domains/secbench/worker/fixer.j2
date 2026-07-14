@@ -5,7 +5,6 @@ Refer to Task Context above for repository location and vulnerability details.
 Base commit hash is at `{{ artifact_paths.base_commit_hash }}`.
 {% from 'domains/secbench/worker/_worker_helpers.j2' import handoff_preamble %}
 {% from 'domains/secbench/_validation_macros.j2' import secb_fix_validation, secb_poll_result %}
-
 {% set fixer_must_instruction -%}
 you **MUST**
 generate the patch from source edits (never hand-write the final diff file), rebuild
@@ -34,9 +33,9 @@ Any source files already read by upstream workers are in `<provided_source_files
    and shared findings via `<context-update>`, **validate and build on their work** —
    don't redo confirmed analysis. Treat peer findings as evidence inputs, not
    authority. If an analyst claims the root cause is in a different file than the
-   manager assigned, follow that claim only after verifying raw logs/code evidence
-   and writing a `MANAGER_OVERRIDE` block. **If a peer worker failed**, their work is
-   unavailable — fall back to the manager's guidance and run the experiments yourself.
+   supervisor assigned, follow that claim only after verifying raw logs/code evidence
+   and writing a `SUPERVISOR_OVERRIDE` block. **If a peer worker failed**, their work is
+   unavailable — fall back to the supervisor's guidance and run the experiments yourself.
 4. **On retry**: check if OTHER siblings completed while you were retrying — their results (patches, analysis, validation) may help you succeed
 
 Then validate what you're building on:
@@ -118,7 +117,7 @@ Then validate what you're building on:
    - Each `fix_run_$N.log` must end with an `exit=<code>` line and show NO sanitizer error for a clean patch. The evaluator reads ONLY `fix_run_*.log` (do NOT create alternate generations like `fix_run2_*`); if the poll prints NOT FINISHED, re-run only the poll. A `fix_run` log without a trailing `exit=` line is invalid evidence even when the patch works.
 
 6. **Test fix with CWE-appropriate validation** (use ALL tools, but prioritize based on CWE):
-   - Run `secb repro` — should print NO sanitizer errors and exit 0. Exit code 1 is acceptable if it's normal exception handling (not vulnerability).
+   - Run `secb repro` — it must print NO sanitizer errors and exit either 0 or the frozen CVE dataset exit oracle. Do not treat an arbitrary nonzero exit as acceptable merely because it looks like normal exception handling.
    - **Memory Lifecycle (leaks)** — Valgrind is the PRIMARY validator:
      `valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./binary < poc_input`
      MUST show `All heap blocks were freed -- no leaks are possible` or `0 bytes in 0 blocks` for the previously-leaked allocation.
@@ -155,6 +154,19 @@ for that subtask **requires** you to produce `{{ hierarchical_only["Fixer"]|join
 containing the exact machine-readable block defined in the assessment rules
 ({{ root_cause_block_fields[0][0] }} etc.). In that case the structured root-cause file is a
 mandated deliverable for the role, not merely encouraged.
+
+The same `[Root-Cause-Analyst]` task MUST author `{{ artifact_paths.patch_plan }}`
+after the root-cause evidence is complete and MUST NOT edit source. The JSON must
+match this exact PatchPlan contract: `schema_version="1"`,
+`evidence_references=["{{ artifact_paths.root_cause_analysis }}"]`, absolute
+`target_file` under `/src`, `target_symbol`, the current file's lowercase SHA-256
+as `base_sha256`, one or more exact `operations` (`kind`, non-empty `anchor`,
+`expected_occurrences`, `replacement`), project-source `allowed_paths`, non-empty
+`forbidden_paths` including `/testcase`, non-empty `required_postconditions`, a
+content identity for the frozen PoC/repro as `pre_patch_exploit_identity`, and
+`validation_commands=["secb patch", "secb build", "secb repro"]`. Replacement
+code must be exact and complete. The host rejects stale hashes, ambiguous anchors,
+unresolved evidence, or out-of-scope paths before rendering the patch diff.
 {%- endset %}
 {{ evidence_files_section('Fixer', fixer_evidence_note) }}
 

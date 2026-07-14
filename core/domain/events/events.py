@@ -2,7 +2,7 @@
 
 import copy
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -70,7 +70,10 @@ class AgentCreated(DomainEvent):
     sibling_index: int = 0
     briefing: dict[str, Any] | None = None
     depends_on: list[int] = Field(default_factory=list)
+    hard_predecessor_ids: list[UUID] = Field(default_factory=list)
     success_criteria: str = ""  # From Subtask.success_criteria, used by verification
+    criticality: Literal["required", "optional"] = "required"
+    dependency_failure_policy: Literal["block", "replan", "continue"] = "block"
 
     # Parent's complexity hint, propagated from Subtask. Lets the
     # orchestrator skip the assessment LLM when the parent has already
@@ -135,6 +138,18 @@ class WorkFailed(DomainEvent):
     """Agent failed to complete work."""
 
     reason: str
+
+
+class PostStepRequested(DomainEvent):
+    """Durably request terminal post-step processing for one outcome."""
+
+    terminal_event_id: UUID
+
+
+class PostStepCompleted(DomainEvent):
+    """Record completion of terminal post-step processing for one outcome."""
+
+    terminal_event_id: UUID
 
 
 class VerificationFailed(DomainEvent):
@@ -244,6 +259,46 @@ class ProcedureExecutionFinished(DomainEvent):
     success: bool
     summary: str
     evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PhaseRouteSelected(DomainEvent):
+    """A phase execution route was selected (host policy or validated Manager decision)."""
+
+    policy_version: str
+    phase: str
+    route: Literal["compact", "expanded", "escalated"]
+    evidence_references: list[str] = Field(default_factory=list)
+    selected_roles: list[str] = Field(default_factory=list)
+    task_instructions: dict[str, str] = Field(default_factory=dict)
+    task_sources: dict[str, str] = Field(default_factory=dict)
+    triggers: list[str] = Field(default_factory=list)
+    remaining_budget: int
+
+
+class PhaseGateRecorded(DomainEvent):
+    """Host recorded the outcome gate for an adaptive phase."""
+
+    phase: str
+    passed: bool
+    evidence_references: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class PatchPlanApproved(DomainEvent):
+    """Host approved and froze a validated change plan."""
+
+    plan_sha256: str
+    evidence_references: list[str] = Field(default_factory=list)
+
+
+class PromptContextAssembled(DomainEvent):
+    """Host recorded bounded context-packet composition telemetry."""
+
+    total_chars: int
+    total_tokens: int
+    segment_sizes: dict[str, int] = Field(default_factory=dict)
+    entries: list[dict[str, Any]] = Field(default_factory=list)
+    omitted_entries: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CodeGenerationStarted(DomainEvent):
@@ -398,6 +453,9 @@ class WorkerCostRecorded(DomainEvent):
     # run, one fresh conversation per worker) are checkable from the DB alone.
     container_id: str | None = None
     conversation_id: str | None = None
+    complete: bool = True
+    termination_reason: str = "completed"
+    usage_missing: bool = False
 
     @property
     def total_recorded_tokens(self) -> int:
@@ -498,6 +556,8 @@ class RunStarted(DomainEvent):
 
     task_description: str
     domain_metadata: JsonObject | None = None
+    treatment_version: str | None = None
+    config_hash: str | None = None
 
 
 class RunCompleted(DomainEvent):
@@ -577,6 +637,14 @@ class SourceFileObserved(DomainEvent):
     content: str
     content_sha256: str
     observed_by: str  # Agent that viewed the file (string form of its UUID)
+    capture_type: Literal["full", "range", "truncated"] = "truncated"
+    requested_start_line: int | None = None
+    requested_end_line: int | None = None
+    actual_start_line: int | None = None
+    actual_end_line: int | None = None
+    file_revision: str = ""
+    phase: str = ""
+    role: str = ""
 
 
 class SourceFileEdited(DomainEvent):
@@ -602,8 +670,8 @@ class SealedArtifact(BaseModel):
 
     model_config = {"frozen": True}
 
-    container_path: str  # e.g. "/testcase/repro.sh", "/usr/local/bin/secb"
-    kind: str  # "repro_skeleton" | "patch_script" | "secb_wrapper"
+    container_path: str  # path inside the runtime container
+    kind: str  # plugin-defined artifact kind
     non_golden: bool = True  # explicit anti-leak marker
     content_sha256: str = ""  # integrity of the Arise-owned content written
 
@@ -612,14 +680,10 @@ class RuntimeSurfaceSealed(DomainEvent):
     """Arise sealed the agent-visible runtime surface (anti-leak enforcement).
 
     Records that the orchestrator overwrote agent-facing runtime artifacts
-    (the seeded non-golden repro skeleton, the immutable patch script, and the
-    delegating secb wrapper) with Arise-owned versions, so the agent cannot
-    read a baked golden solution. Reconstructable from the DB alone for
-    post-hoc anti-leak audit. Observability event -- does not change agent
-    state. The secb wrapper's content/path are deterministic constants
-    installed unconditionally per worker container, so it is recorded here at
-    workspace-prep time alongside the repro/patch scripts.
+    with host-owned versions, so the agent cannot read hidden reference data.
+    Reconstructable from the DB alone for post-hoc isolation audit. This is an
+    observability event and does not change agent state.
     """
 
-    surface: str  # which runtime surface was sealed, e.g. "secbench"
+    surface: str  # plugin-defined runtime surface identifier
     sealed_artifacts: list[SealedArtifact]

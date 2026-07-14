@@ -70,7 +70,7 @@ def test_role_map_resolves_pending_to_determined_role() -> None:
 
 
 def test_role_map_pins_boss_even_when_executed_as_worker() -> None:
-    """The flat (N1/N2) root is created as boss and runs as a worker — stays BOSS."""
+    """The flat root is created as boss and runs as a worker, so it stays BOSS."""
     # Given: a single flat agent created as boss but executing as a worker
     builder = RunBuilder()
     boss = builder.boss()

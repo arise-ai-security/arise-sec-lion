@@ -1,4 +1,4 @@
-{# SEC-bench assessment bias — forces DECOMPOSE for phase-level security tasks.
+{# SEC-bench assessment policy for phase tasks and atomic catalog roles.
    Role menus render from the injected catalog. The
    CWE-specific `security_insights` requirements live in the included partial
    (_security_insights.j2) so the role catalog, the decomposition rules, and the
@@ -18,17 +18,26 @@
 {% endfor %}
 {% endmacro %}
 <domain_assessment>
-## Security Task Assessment — DECOMPOSE Required
+## Security Task Assessment
 
 This is a security vulnerability reproduction task.
 
-### MANDATORY: Phase-level tasks MUST decompose
+### Phase routing
 
-If your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]`, you **MUST choose `"action": "decompose"`**. Choosing `"execute"` for these tasks is FORBIDDEN — a single worker CANNOT complete an entire phase and will fail. Decompose into the catalog roles below — spawn **EVERY role shown as REQUIRED** as a separate sibling subtask using its exact bracket name; do NOT collapse, merge, or omit any REQUIRED role (the deep code-analysis roles are what let weaker workers collectively succeed). Add **optional** roles only when the CVE needs them. Use the exact bracket names below; an out-of-catalog name still spawns but is not recognized as one of these roles:
+For a phase-level task whose description starts with `[Builder]`, `[Exploiter]`, or
+`[Fixer]`, choose `"action": "decompose"` only when no Host policy already supplied a
+route. The Host owns the compact initial route; this assessment must not rediscover or
+expand it. A Manager uses its separate decomposition prompt only after a required child
+fails, using the supplied failure history to select same-phase recovery roles and
+instructions. A phase task already marked `estimated_complexity="simple"` is atomic and
+bypasses this assessment.
 
 ### Dependency contract
 
-Do NOT rely on any repair gate — you are responsible for emitting correct roles and dependencies. If you select a role with hard dependencies, you MUST also include each listed producer role as a sibling subtask, place the producer before the consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling position. Missing producer roles, missing `depends_on` edges, or `depends_on` edges pointing at the wrong sibling are run failures.
+For a Manager-authored decomposition during recovery, if you select a role with hard dependencies,
+include each listed producer role as a sibling subtask, place the producer before the
+consumer, and set the consumer's JSON `depends_on` to the producer's 0-indexed sibling
+position. Missing or incorrect dependency edges are run failures.
 
 Hard dependencies are only artifact dependencies: role B hard-depends on role A when B consumes an artifact A is responsible for producing. Soft inputs are useful evidence if present; they are fallback guidance only. Do not put soft inputs in JSON `depends_on`.
 
@@ -45,13 +54,13 @@ Exploiter and Fixer phases benefit from **more workers with narrower, more speci
 
 ### Sub-phase tasks — EXECUTE is MANDATORY for these role names
 
-**How to classify your task**: Look ONLY at the bracketed prefix in your task description — e.g., `[PoC-Researcher]`, `[Patch-Creator]`. Do NOT classify by task content. A task that describes security analysis is NOT an `[Exploiter]` task unless the prefix is literally `[Exploiter]`. A task prefixed `[PoC-Researcher]` is a leaf worker inside the Exploiter phase, not an Exploiter phase itself.
+**How to classify your task**: Look ONLY at the bracketed prefix in your task description — e.g., `[PoC-Researcher]`, `[Patch-Applier]`. Do NOT classify by task content. A task that describes security analysis is NOT an `[Exploiter]` task unless the prefix is literally `[Exploiter]`. A task prefixed `[PoC-Researcher]` is a leaf worker inside the Exploiter phase, not an Exploiter phase itself.
 
 If your task description starts with ANY of these bracketed role names, **default to EXECUTE** — they are atomic leaf workers:
 
 {% for r in all_roles %}`[{{ r.name }}]`{% if not loop.last %}, {% endif %}{% endfor %}
 
-**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. Only choose DECOMPOSE if your task description starts with `[Builder]`, `[Exploiter]`, or `[Fixer]` — the three phase-level roles.
+**General rule**: If you are a child of a MANAGER (not the BOSS), default to EXECUTE. A configured simple phase is atomic even when its prefix is `[Builder]`, `[Exploiter]`, or `[Fixer]`.
 
 ### ⚠️ MANDATORY: Read Source Code Before Decomposing
 {% if shared_code_enabled %}
@@ -59,8 +68,8 @@ The vulnerable source the boss already read is provided below — **build on it*
 {% else %}
 **If you choose DECOMPOSE, you MUST** use your recon tools to read the vulnerable source code FIRST — do not decompose from the CVE description alone:
 
-1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE/bug report — understand the function structure, error handling, and resource lifecycle
-2. **`read_symbol`** on the specific function named in the bug report — identify the exact code path that leads to the vulnerability
+1. **`read_file`** on the vulnerable source file(s) mentioned in the CVE description or sanitizer report — understand the function structure, error handling, and resource lifecycle
+2. **`read_symbol`** on the specific application function named in the sanitizer report — identify the exact code path that leads to the vulnerability
 3. **`search_codebase`** to find related patterns (callers, error-handling idioms, cleanup conventions) — some vulnerabilities span multiple files
 {% endif %}
 

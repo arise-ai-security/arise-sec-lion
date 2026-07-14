@@ -60,6 +60,12 @@ def test_build_stdio_config_returns_engine_agnostic_dict() -> None:
     assert spec["env"][server.ENV_CONTAINER_SOURCE_DIR] == "/src"
     assert spec["env"][server.ENV_CONTAINER_TESTCASE_DIR] == "/testcase"
     assert spec["env"][server.ENV_CONTAINER_WORK_DIR] == "/work"
+    assert spec["in_container"] == {
+        "command": "/opt/arise-mcp/venv/bin/python",
+        "args": ["-m", "plugins.security.mcp.security_tools_server"],
+        "remove_env": [server.ENV_HELPER_SCRIPT],
+        "env": {"PYTHONPATH": "/opt/arise-mcp"},
+    }
 
 
 def test_build_stdio_config_omits_work_dir_when_unset() -> None:
@@ -93,7 +99,7 @@ def test_valgrind_run_uses_bash_lc_in_in_container_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When ARISE_SECBENCH_HELPER_SCRIPT is unset, the server is running
-    inside the target container (Cell A path). It must execute commands
+    inside the target container. It must execute commands
     directly via ``bash -lc`` instead of shelling out to ``secb-exec``."""
     # Given: only in-container env vars set (no helper script).
     monkeypatch.delenv(server.ENV_HELPER_SCRIPT, raising=False)

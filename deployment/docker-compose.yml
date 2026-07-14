@@ -70,7 +70,7 @@ services:
   db:
     profiles: [local]
     image: postgres:16-alpine
-    container_name: arise-db
+    container_name: postgres-main
     env_file: .env
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

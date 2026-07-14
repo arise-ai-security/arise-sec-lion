@@ -836,9 +836,8 @@ class TestChildFailurePropagation:
         assert _get_agent_status(event_store, boss_id) == "failed"
 
     @pytest.mark.asyncio
-    async def test_redecomposition_prompt_carries_failure_history(self) -> None:
-        """All children failed → boss re-decomposes and its next decomposition
-        prompt renders the recorded failure (task label + reason)."""
+    async def test_boss_does_not_redecompose_after_child_failure(self) -> None:
+        """A Boss cannot spend a Manager's semantic recovery budget."""
         event_store = InMemoryEventStore()
         llm = FakeLLM()
         worker = FakeWorkerTool()
@@ -853,17 +852,12 @@ class TestChildFailurePropagation:
 
         child_id = _find_child_ids(event_store, boss_id)[0]
         await svc.run_agent_step(child_id)  # assess → WORKER
-        await svc.run_agent_step(child_id)  # execute → FAILED → boss re-decomposes
+        llm_call_count = len(llm.calls)
+        await svc.run_agent_step(child_id)  # execute → FAILED
 
         assert _get_agent_status(event_store, child_id) == "failed"
-        assert _get_agent_status(event_store, boss_id) == "analyzing"
-
-        # Boss re-decomposes: the new decomposition prompt carries the failure
-        await svc.run_agent_step(boss_id)
-
-        redecomposition_prompt = llm.calls[-1][0]
-        assert "<previous_attempt_failures>" in redecomposition_prompt
-        assert "Out of memory" in redecomposition_prompt
+        assert _get_agent_status(event_store, boss_id) == "failed"
+        assert len(llm.calls) == llm_call_count
 
 
 # =============================================================================

@@ -74,8 +74,8 @@ class TestAncestor:
     def test_detailed_task_preserves_critical_details(self) -> None:
         """A detailed task must preserve key identifiers, file paths, and function names.
 
-        A15 fix: raised from 100 to 300 chars so child agents receive
-        enough ancestry context for proper alignment.
+        The cap is 300 chars so child agents receive enough ancestry context
+        for proper alignment.
         """
         agent_id = uuid4()
         config = {
@@ -146,6 +146,7 @@ class TestBriefing:
                 Ancestor(agent_id="1", role="boss", task_summary="Root task"),
             ),
             decisions=("Use React", "Use PostgreSQL"),
+            evidence_references=("artifact:analysis.txt",),
         )
 
         data = briefing.model_dump()
@@ -155,6 +156,7 @@ class TestBriefing:
         assert restored.parent_role == briefing.parent_role
         assert len(restored.ancestry) == len(briefing.ancestry)
         assert restored.decisions == briefing.decisions
+        assert restored.evidence_references == briefing.evidence_references
 
 
 class TestReport:

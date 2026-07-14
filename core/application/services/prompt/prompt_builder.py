@@ -58,6 +58,12 @@ def _bounded_digest(digest: str | None) -> str | None:
     return f"{digest[:800]}\n[...omitted...]\n{digest[-400:]}"
 
 
+def _ancestor_task_descriptions(briefing: "Briefing | None") -> tuple[str, ...]:
+    if briefing is None:
+        return ()
+    return tuple(ancestor.task_summary for ancestor in reversed(briefing.ancestry))
+
+
 class TemplateChain:
     """Fluent builder for chaining template renders."""
 
@@ -185,7 +191,7 @@ class PromptBuilder:
         per-task content (handoff, user prompt, scope, briefing, task,
         workspace). Keeping the stable prefix byte-identical across calls is
         what lets ``litellm_adapter`` realize prompt-cache hits on multi-turn
-        loops and across agents on the same CVE.
+        loops and across agents on the same domain task.
 
         ``shared_code_index`` (pre-rendered by the shared-code provider) lands
         immediately before <task>: proximity is the mechanism that makes the
@@ -328,7 +334,7 @@ class PromptBuilder:
 
         # Cache-optimized path: assemble the stable prefix and the volatile tail
         # as separate strings, then join with exactly ONE seam marker. Any stray
-        # marker that data-controlled content (CVE text, task, briefing) might
+        # marker that data-controlled content (domain text, task, briefing) might
         # contain is scrubbed from each side, so the seam is unambiguous and the
         # cached prefix can never be truncated by an injected marker. For normal
         # prompts (no stray markers) this is byte-identical to a single render.
@@ -370,6 +376,7 @@ class PromptBuilder:
             agent_role=AgentRole.PENDING,
             default_tool=self.default_tool,
             briefing=briefing,
+            ancestor_task_descriptions=_ancestor_task_descriptions(briefing),
             hierarchy_limits=hierarchy_limits,
             domain_context=domain_context,
             scope=scope,
@@ -438,6 +445,7 @@ class PromptBuilder:
             default_tool=self.default_tool,
             parent_task=parent_task,
             briefing=briefing,
+            ancestor_task_descriptions=_ancestor_task_descriptions(briefing),
             hierarchy_limits=hierarchy_limits,
             domain_context=domain_context,
             scope=scope,
@@ -505,6 +513,7 @@ class PromptBuilder:
             default_tool=self.default_tool,
             domain_context=domain_context,
             briefing=briefing,
+            ancestor_task_descriptions=_ancestor_task_descriptions(briefing),
             handoff=handoff,
             workspace_context=workspace_context,
             shared_code_block=shared_code_block,

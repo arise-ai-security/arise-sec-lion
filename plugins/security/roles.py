@@ -1,17 +1,18 @@
 """Single source of truth for SEC-bench decomposition roles (the BEF leaf workers).
 
 A *role* is a bracket label a phase manager decomposes into, e.g. ``[PoC-Researcher]``.
-This is cybersecurity domain data (the experiment's decomposition contract), not
+This is cybersecurity domain data (the SEC-bench decomposition contract), not
 topology or orchestration: it only *describes* roles and their artifact dependencies.
 
 ``deliverables.py`` paths are mirrored in each role's ``produces`` so the eval
 layer can check exactly the roles that actually ran.
 
-Adaptive selection (the manager picks the roles a CVE needs) is described by two fields:
+Adaptive selection (the Manager proposes roles and the host validator repairs the route)
+is described by two fields:
 ``depends_on`` (hard producer roles whose artifacts this role consumes) and
 ``soft_depends_on`` (optional inputs the role uses if present and otherwise
-regenerates/degrades — never a blind reference). The system does not repair missing
-dependencies; prompt noncompliance is reported by evaluation.
+regenerates/degrades — never a blind reference). The decomposition validator replaces
+merged specialist leaves and injects missing roles required by the selected route.
 """
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ class Role:
     ``depends_on``    — upstream *roles* whose outputs this role hard-requires.
     ``soft_depends_on`` — upstream roles used if present, otherwise the role must
                           regenerate/degrade (the input is not guaranteed to exist).
-    ``required``      — part of the phase's core chain (always spawned) vs optional
-                        (selected only when the CVE needs it).
+    ``required``      — part of the full phase contract vs optional. The compact route
+                        may select a strict subset before evidence-triggered expansion.
     ``insight``       — the empirical question seed for security_insights; the full
                         CWE-conditional guidance stays in assess.j2.
     ``evidence_file`` — the canonical artifact path a non-deliverable (research) role
@@ -78,7 +79,7 @@ ROLES: Final[tuple[Role, ...]] = (
         insight="Which exact commit is the vulnerable base for the SEC-bench build?",
     ),
     Role(
-        name="Build-Compiler",
+        name="Build-Executor",
         phase="Builder",
         required=True,
         summary="Run secb build, repair build inputs when needed, and declare binaries.",
@@ -94,9 +95,12 @@ ROLES: Final[tuple[Role, ...]] = (
         name="Build-Verifier",
         phase="Builder",
         required=True,
-        summary="Verify the instrumented binary is real, non-vacuous, and runs under ASan.",
-        depends_on=("Build-Compiler",),
-        insight="Does the produced binary run the PoC path without missing-ASan-runtime errors?",
+        summary=(
+            "Verify every declared binary is an executable ELF that initializes the "
+            "configured sanitizer runtime."
+        ),
+        depends_on=("Build-Executor",),
+        insight="Does every declared ELF initialize the configured sanitizer before main?",
     ),
     # -- Exploiter ----------------------------------------------------------
     Role(
@@ -162,11 +166,12 @@ ROLES: Final[tuple[Role, ...]] = (
         phase="Fixer",
         required=True,
         summary="Root-cause the bug at code-block level; emit the structured fix-site block.",
-        produces=(ARTIFACT_PATHS["root_cause_analysis"],),
+        produces=(ARTIFACT_PATHS["root_cause_analysis"], ARTIFACT_PATHS["patch_plan"]),
         soft_depends_on=("Forward-Instrumentator",),
         insight=(
             "Identify the data-corruption origin (not just the crash site) with live "
-            "instrumentation, and emit the block keys: " + ", ".join(ROOT_CAUSE_BLOCK_KEYS)
+            "instrumentation, emit the block keys, and author the exact host-validated PatchPlan: "
+            + ", ".join(ROOT_CAUSE_BLOCK_KEYS)
         ),
     ),
     Role(
@@ -186,13 +191,13 @@ ROLES: Final[tuple[Role, ...]] = (
         insight="Does the candidate fix the crash without breaking unrelated behavior?",
     ),
     Role(
-        name="Patch-Creator",
+        name="Patch-Applier",
         phase="Fixer",
         required=True,
-        summary="Generate the patch from source edits at the analyst fix site (not hand-written).",
+        summary="Apply the approved PatchPlan literally; block on any mismatch.",
         produces=(ARTIFACT_PATHS["model_patch"],),
         depends_on=("Root-Cause-Analyst",),
-        insight="Does the diff touch only PROPOSED_FIX_SITE (or justify), one logical hunk?",
+        insight="Did the frozen PatchPlan apply exactly, without scope drift?",
     ),
     Role(
         name="Patch-Validator",
@@ -200,7 +205,7 @@ ROLES: Final[tuple[Role, ...]] = (
         required=True,
         summary="Apply, rebuild, and re-run the repro to confirm the fix; write the verdict file.",
         produces=(ARTIFACT_PATHS["patch_validation"],),
-        depends_on=("Patch-Creator",),
+        depends_on=("Patch-Applier",),
         insight="Does the patch apply clean, build, and yield 3/3 no-crash on the repro?",
     ),
     Role(
@@ -229,6 +234,29 @@ _BY_NAME: Final[dict[str, Role]] = {r.name: r for r in ROLES}
 
 PHASE_ROLES: Final[dict[str, tuple[Role, ...]]] = {
     phase: tuple(r for r in ROLES if r.phase == phase) for phase in PHASE_ORDER
+}
+
+# Adaptive role sets (single source of truth for compact + escalation catalog).
+# COMPACT_ROLES are the allowed first-attempt workers per phase.
+# ADAPTIVE_SPECIALISTS may be chosen by the Manager on re-decomposition only —
+# never by keyword matching. No failure-to-role associations live here.
+COMPACT_ROLES: Final[dict[str, tuple[str, ...]]] = {
+    "Builder": ("Build-Executor", "Build-Verifier"),
+    "Exploiter": ("Repro-Creator", "Exploit-Validator"),
+    "Fixer": ("Root-Cause-Analyst", "Patch-Applier", "Patch-Validator"),
+    "Reporter": ("Reporter",),
+}
+
+ADAPTIVE_SPECIALISTS: Final[dict[str, tuple[str, ...]]] = {
+    "Builder": ("Build-Setup",),
+    "Exploiter": (
+        "PoC-Researcher",
+        "Data-Flow-Analyst",
+        "PoC-Tester",
+        "Forward-Instrumentator",
+    ),
+    "Fixer": ("Candidate-Reviewer", "Regression-Tester"),
+    "Reporter": (),
 }
 
 

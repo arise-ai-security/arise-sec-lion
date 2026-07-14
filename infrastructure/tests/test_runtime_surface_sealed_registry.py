@@ -17,14 +17,14 @@ def test_runtime_surface_sealed_registered_and_round_trips() -> None:
     original = RuntimeSurfaceSealed(
         aggregate_id=uuid4(),
         sequence_number=2,
-        surface="secbench",
+        surface="sample",
         sealed_artifacts=[
             SealedArtifact(
-                container_path="/testcase/repro.sh",
-                kind="repro_skeleton",
+                container_path="/artifacts/bootstrap.sh",
+                kind="bootstrap_script",
                 content_sha256="d" * 64,
             ),
-            SealedArtifact(container_path="/usr/local/bin/secb", kind="secb_wrapper"),
+            SealedArtifact(container_path="/usr/local/bin/runner", kind="runtime_wrapper"),
         ],
     )
 
@@ -34,6 +34,9 @@ def test_runtime_surface_sealed_registered_and_round_trips() -> None:
 
     # Then: the round-trip preserves the event and its nested SealedArtifacts.
     assert restored == original
-    assert [a.kind for a in restored.sealed_artifacts] == ["repro_skeleton", "secb_wrapper"]
+    assert [a.kind for a in restored.sealed_artifacts] == [
+        "bootstrap_script",
+        "runtime_wrapper",
+    ]
     assert restored.sealed_artifacts[0].content_sha256 == "d" * 64
     assert restored.sealed_artifacts[1].non_golden is True

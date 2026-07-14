@@ -51,6 +51,9 @@ def _observed(agg: UUID, seq: int, path: str, content: str) -> SourceFileObserve
         content=content,
         content_sha256="x" * 64,
         observed_by=str(agg),
+        # These fixtures represent whole-file views; render them as full <file>
+        # entries (the truthful capture a rangeless view now records).
+        capture_type="full",
     )
 
 

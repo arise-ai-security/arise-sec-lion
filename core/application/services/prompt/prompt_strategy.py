@@ -38,6 +38,7 @@ class PromptContext:
     default_tool: str
     parent_task: str | None = None
     briefing: "Briefing | None" = None
+    ancestor_task_descriptions: tuple[str, ...] = ()
     hierarchy_limits: "HierarchyLimits | None" = None
     domain_context: object | None = None
     handoff: Any = None

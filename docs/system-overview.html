@@ -8,12 +8,12 @@
   :root {
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-    --bg:#fafaf9; --panel:#f4f4f2; --card:#fff;
-    --ink:#1b1b1d; --ink-2:#56565d; --ink-3:#8c8c93;
-    --line:#e6e6e3; --line-2:#d6d6d2;
+    --bg:#f7f8fa; --panel:#eef1f4; --card:#fff;
+    --ink:#101418; --ink-2:#4d5660; --ink-3:#747e89;
+    --line:#dde2e7; --line-2:#cbd2d9;
     --green:#15803d; --green-bg:#e9f4ed; --green-tx:#136632;
     --blue:#2563a8;  --blue-bg:#e8f0f9;  --blue-tx:#1f5793;
-    --amber:#b45309; --amber-bg:#fbf0de; --amber-tx:#8a4308;
+    --amber:#6246a8; --amber-bg:#f0edfa; --amber-tx:#4f388b;
     --red:#bb2d1f;   --red-bg:#fbeae7;   --red-tx:#9e261a;
     --maxw:1120px;
   }
@@ -33,9 +33,9 @@
   nav.top .links a:hover { color:var(--ink); }
   @media (max-width:860px){ nav.top .links{ display:none; } }
 
-  .wrap { max-width:var(--maxw); margin:0 auto; padding:0 28px; }
+  .wrap { width:100%; max-width:var(--maxw); min-width:0; margin:0 auto; padding:0 28px; }
   header.hero { padding:60px 0 38px; border-bottom:1px solid var(--line); }
-  .eyebrow { font-family:var(--mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase; color:var(--green); margin-bottom:16px; }
+  .eyebrow { font-family:var(--mono); font-size:12px; color:var(--green); margin-bottom:16px; }
   h1 { font-family:var(--sans); font-weight:600; font-size:clamp(32px,5vw,50px); line-height:1.05; letter-spacing:-0.025em; color:var(--ink); margin:0; }
   .sub { font-size:clamp(17px,2vw,20px); color:var(--ink-2); margin:16px 0 0; max-width:70ch; }
   .props { display:flex; flex-wrap:wrap; gap:10px; margin-top:26px; }
@@ -45,7 +45,7 @@
   .meta-row { margin-top:22px; font-family:var(--mono); font-size:12.5px; color:var(--ink-3); }
 
   section { padding:52px 0; border-bottom:1px solid var(--line); }
-  .kick { font-family:var(--mono); font-size:12px; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink-3); margin-bottom:10px; }
+  .kick { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-bottom:10px; }
   .kick b { color:var(--green); font-weight:600; }
   h2 { font-family:var(--sans); font-weight:600; font-size:clamp(23px,3vw,30px); letter-spacing:-0.02em; color:var(--ink); margin:0 0 12px; }
   .intro { font-size:17px; color:var(--ink-2); max-width:76ch; margin:0 0 26px; }
@@ -53,8 +53,8 @@
   p { max-width:76ch; }
 
   figure { margin:0 0 8px; }
-  .frame { border:1px solid var(--line-2); border-radius:8px; padding:22px 20px; background-color:#fcfcfb;
-    background-image:radial-gradient(var(--line-2) 0.8px, transparent 0.9px); background-size:22px 22px; background-position:-1px -1px; overflow-x:auto; }
+  .frame { border:1px solid var(--line-2); border-radius:8px; padding:22px 20px; background-color:#fcfdfe;
+    background-image:linear-gradient(var(--line) 1px, transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px); background-size:44px 44px; overflow-x:auto; }
   .frame svg { display:block; width:100%; height:auto; }
   .frame.s svg{min-width:680px;} .frame.m svg{min-width:860px;} .frame.l svg{min-width:980px;}
   figcaption { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:12px; line-height:1.55; max-width:80ch; }
@@ -76,7 +76,7 @@
   .d-title.sm { font-size:14px; } .d-title.xs { font-size:12.5px; }
   .d-sub { font-family:var(--mono); font-size:11px; fill:var(--ink-3); }
   .d-sub.xs { font-size:10px; }
-  .d-role { font-family:var(--mono); font-size:11.5px; font-weight:600; letter-spacing:0.06em; }
+  .d-role { font-family:var(--mono); font-size:11.5px; font-weight:600; }
   .d-role.green{fill:var(--green-tx);} .d-role.blue{fill:var(--blue-tx);} .d-role.red{fill:var(--red-tx);} .d-role.amber{fill:var(--amber-tx);}
   .d-edge { fill:none; stroke:#9a9aa1; stroke-width:1.5; }
   .d-edge.green{stroke:var(--green);} .d-edge.blue{stroke:var(--blue);} .d-edge.red{stroke:var(--red);} .d-edge.amber{stroke:var(--amber);}
@@ -89,7 +89,7 @@
 
   /* reference table */
   .gtab { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--card); margin-top:24px; }
-  .gtab > h4 { margin:0; padding:11px 16px; font-family:var(--mono); font-size:12px; letter-spacing:0.06em; text-transform:uppercase; border-bottom:1px solid var(--line); color:var(--green-tx); background:var(--green-bg); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .gtab > h4 { margin:0; padding:11px 16px; font-family:var(--mono); font-size:12px; border-bottom:1px solid var(--line); color:var(--green-tx); background:var(--green-bg); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .gtab .when { font-weight:400; color:var(--ink-3); letter-spacing:0; text-transform:none; }
   .gtab dl { margin:0; padding:4px 16px 12px; }
   .gtab .row { display:flex; gap:12px; padding:8px 0; border-top:1px solid var(--line); font-size:13.5px; color:var(--ink-2); }
@@ -99,7 +99,7 @@
 
   table.grid { width:100%; border-collapse:collapse; margin-top:24px; font-size:13.5px; background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   table.grid th, table.grid td { text-align:left; padding:10px 14px; border-top:1px solid var(--line); vertical-align:top; }
-  table.grid thead th { background:var(--panel); color:var(--ink); font-family:var(--mono); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase; border-top:none; }
+  table.grid thead th { background:var(--panel); color:var(--ink); font-family:var(--mono); font-size:11.5px; border-top:none; }
   table.grid td.cell { font-family:var(--mono); font-size:12px; color:var(--ink); white-space:nowrap; }
   table.grid tbody tr:hover { background:var(--panel); }
   .tag { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 7px; border-radius:4px; }
@@ -123,8 +123,21 @@
   [data-reveal] { opacity:0; transform:translateY(10px); transition:opacity .55s ease, transform .55s ease; }
   [data-reveal].in { opacity:1; transform:none; }
   @media (max-width:900px){ .lex{grid-template-columns:1fr;} }
+  @media (max-width:700px){
+    .wrap{padding-left:20px;padding-right:20px;}
+    table.grid{display:block;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;}
+    .gtab .row{display:block;}
+    .gtab .row .id{display:block;width:auto;margin-bottom:4px;}
+  }
   @media (prefers-reduced-motion:reduce){ [data-reveal]{opacity:1;transform:none;transition:none;} html{scroll-behavior:auto;} }
-  @media print { nav.top{display:none;} section{page-break-inside:avoid;} [data-reveal]{opacity:1;transform:none;} *{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
+  @media print {
+    nav.top{display:none;}
+    section{page-break-inside:avoid;}
+    .frame{overflow:visible;padding:12px;}
+    .frame svg{width:100%!important;min-width:0!important;}
+    [data-reveal]{opacity:1;transform:none;}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
 
   @media (prefers-color-scheme:dark){
     :root{
@@ -133,7 +146,7 @@
       --line:#2b2b30; --line-2:#3a3a41;
       --green:#4ea774; --green-bg:#16241c; --green-tx:#7fca9c;
       --blue:#5b9bd8;  --blue-bg:#15212f;  --blue-tx:#8bbbe6;
-      --amber:#d08a3e; --amber-bg:#2a1f10; --amber-tx:#e0aa66;
+      --amber:#8b76c9; --amber-bg:#211d31; --amber-tx:#b8a7e7;
       --red:#d66052;   --red-bg:#2a1512;   --red-tx:#e79184;
     }
     .frame{background-color:#161618;}
@@ -145,18 +158,18 @@
     --line:#2b2b30; --line-2:#3a3a41;
     --green:#4ea774; --green-bg:#16241c; --green-tx:#7fca9c;
     --blue:#5b9bd8;  --blue-bg:#15212f;  --blue-tx:#8bbbe6;
-    --amber:#d08a3e; --amber-bg:#2a1f10; --amber-tx:#e0aa66;
+    --amber:#8b76c9; --amber-bg:#211d31; --amber-tx:#b8a7e7;
     --red:#d66052;   --red-bg:#2a1512;   --red-tx:#e79184;
   }
   :root[data-theme="dark"] .frame{background-color:#161618;}
   :root[data-theme="dark"] .d-edge{stroke:#7a7a82;}
   :root[data-theme="light"]{
-    --bg:#fafaf9; --panel:#f4f4f2; --card:#fff;
-    --ink:#1b1b1d; --ink-2:#56565d; --ink-3:#8c8c93;
-    --line:#e6e6e3; --line-2:#d6d6d2;
+    --bg:#f7f8fa; --panel:#eef1f4; --card:#fff;
+    --ink:#101418; --ink-2:#4d5660; --ink-3:#747e89;
+    --line:#dde2e7; --line-2:#cbd2d9;
     --green:#15803d; --green-bg:#e9f4ed; --green-tx:#136632;
     --blue:#2563a8;  --blue-bg:#e8f0f9;  --blue-tx:#1f5793;
-    --amber:#b45309; --amber-bg:#fbf0de; --amber-tx:#8a4308;
+    --amber:#6246a8; --amber-bg:#f0edfa; --amber-tx:#4f388b;
     --red:#bb2d1f;   --red-bg:#fbeae7;   --red-tx:#9e261a;
   }
 </style>
@@ -166,17 +179,17 @@
 <nav class="top"><div class="inner">
   <span class="brand"><span class="dot">▸</span> arise × sec-bench</span>
   <span class="links">
-    <a href="#story">what</a><a href="#matrix">experiments</a><a href="#arch">architecture</a>
-    <a href="#code">code</a><a href="#hierarchy">hierarchy</a><a href="#heal">self-healing</a><a href="#proc">procedures</a><a href="#ref">reference</a>
+    <a href="#story">what</a><a href="#arch">architecture</a><a href="#matrix">experiments</a>
+    <a href="#adaptive">adaptive</a><a href="#roles">workers</a><a href="#proc">procedures</a><a href="#evaluator">evaluator</a><a href="#release">release</a><a href="#ref">reference</a>
   </span>
 </div></nav>
 
 <header class="hero"><div class="wrap">
   <div class="eyebrow">System Overview</div>
   <h1>A self-healing multi-agent platform for reproducing &amp; fixing real CVEs</h1>
-  <p class="sub">Arise runs a recursive <b>BOSS → MANAGER → WORKER</b> agent tree against SEC-bench vulnerability tasks — building the project, triggering the bug, patching it, and reporting — so researchers can measure whether hierarchical agent topologies beat flat ones. Every state change is an event; failures become context and heal themselves.</p>
+  <p class="sub">Arise compares a flat N1 baseline with B4's adaptive Manager hierarchy and B3's direct compact-role topology on SEC-bench CVEs. LLM workers build evidence and code; Host-controlled procedures execute fixed in-run checks; a separate evaluator decides success from fresh replay, provenance, and blinded semantic review.</p>
   <div class="props">
-    <span class="p"><b></b> event-sourced · 38 event types</span>
+    <span class="p"><b></b> event-sourced · 42 event types</span>
     <span class="p b"><b></b> hexagonal / ports-and-adapters</span>
     <span class="p a"><b></b> Docker-out-of-Docker CVE runtime</span>
     <span class="p r"><b></b> deterministic procedure tier</span>
@@ -240,90 +253,59 @@
         <span><i class="li-amber"></i> CVE runtime</span>
         <span><i class="li-green"></i> event store / reads</span>
       </div>
-      <figcaption><b>Fig 1.</b> The orchestrator never stores mutable state: it emits events to Postgres and rebuilds every agent by replaying them. The dashboard and the experiment evaluators are pure read-side consumers of that same stream.</figcaption>
+      <figcaption><b>Fig 1.</b> The orchestrator emits events and rebuilds every agent by replay. The dashboard reads that stream; evaluators combine immutable events, run artifacts, fresh external replay, and blinded model judgments.</figcaption>
     </figure>
   </section>
 
   <!-- ============ 02 — EXPERIMENT MATRIX ============ -->
   <section id="matrix">
-    <div class="kick" data-reveal><b>02</b> &nbsp;/&nbsp; The experiments</div>
-    <h2 data-reveal>Four topologies, one controlled comparison</h2>
-    <p class="intro" data-reveal>Each CVE is attempted by four <strong>cells</strong> that hold the task, tools, and CVE context fixed and vary only the <strong>agent topology</strong>. The <span class="tag b">B</span> cells are Arise's own hierarchical orchestrator; the <span class="tag n">N</span> cells are a naive OpenHands baseline. Reading the pairs isolates one variable at a time: <code>B3 vs B4</code> is the value of the manager tier, <code>N1 vs N2</code> is the value of ad-hoc subagents.</p>
+    <div class="kick" data-reveal><b>02</b> / Treatments</div>
+    <h2 data-reveal>N1 baseline, B4 adaptive, B3 direct compact</h2>
+    <p class="intro" data-reveal>The next confirmatory study compares <strong>N1 with B4</strong>. B3 is the direct Manager-layer ablation: the host flattens B4's same compact DAG into nine direct roles. B3 inherits the same role prompts, models, tools, procedures, dependency-scoped source packets, retries, and budgets; only ancestry metadata reflects the omitted Manager.</p>
     <figure data-reveal>
       <div class="frame m">
-        <svg viewBox="0 0 1080 300" role="img" aria-label="Four experiment topologies compared">
-          <defs>
-            <marker id="m-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
-          </defs>
-          <!-- band separators -->
-          <path class="d-edge dashed" d="M270,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
-          <path class="d-edge dashed" d="M540,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
-          <path class="d-edge dashed" d="M810,44 V286" style="stroke:var(--line-2);stroke-width:1"/>
-          <!-- column titles -->
-          <text class="d-role blue"  x="135" y="34" text-anchor="middle">N1 · linear</text>
-          <text class="d-role blue"  x="405" y="34" text-anchor="middle">N2 · subagents</text>
-          <text class="d-role amber" x="675" y="34" text-anchor="middle">B3 · managers ablated</text>
-          <text class="d-role amber" x="945" y="34" text-anchor="middle">B4 · full tree</text>
+        <svg viewBox="0 0 1080 330" role="img" aria-label="N1 B3 and B4 experiment treatments">
+          <defs><marker id="m-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
+          <path class="d-edge dashed" d="M360,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
+          <path class="d-edge dashed" d="M720,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
+          <text class="d-role blue" x="180" y="32" text-anchor="middle">N1 · flat baseline</text>
+          <text class="d-role amber" x="540" y="32" text-anchor="middle">B3 · direct compact</text>
+          <text class="d-role green" x="900" y="32" text-anchor="middle">B4 · adaptive target</text>
 
-          <!-- N1: single flat agent -->
-          <rect class="d-card blue" x="75" y="130" width="120" height="46" rx="6"/>
-          <text class="d-title xs" x="135" y="151" text-anchor="middle">OpenHands</text>
-          <text class="d-sub xs" x="135" y="166" text-anchor="middle">flat · 1 session</text>
+          <rect class="d-card blue" x="95" y="126" width="170" height="58" rx="6"/>
+          <text class="d-title sm" x="180" y="151" text-anchor="middle">OpenHands</text>
+          <text class="d-sub" x="180" y="170" text-anchor="middle">one linear session</text>
+          <text class="d-cap" x="180" y="214" text-anchor="middle">Build → Exploit → Fix → Report</text>
 
-          <!-- N2: agent + 2 subagents -->
-          <rect class="d-card blue" x="345" y="70" width="120" height="44" rx="6"/>
-          <text class="d-title xs" x="405" y="97" text-anchor="middle">OpenHands</text>
-          <rect class="d-card fill-blue" x="318" y="176" width="80" height="40" rx="6"/>
-          <text class="d-sub xs" x="358" y="200" text-anchor="middle">subagent</text>
-          <rect class="d-card fill-blue" x="412" y="176" width="80" height="40" rx="6"/>
-          <text class="d-sub xs" x="452" y="200" text-anchor="middle">subagent</text>
-          <path class="d-edge" d="M405,114 V150 H358 V174" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M405,150 H452 V174" marker-end="url(#m-a)"/>
+          <rect class="d-card ink" x="475" y="64" width="130" height="44" rx="6"/>
+          <text class="d-title xs" x="540" y="91" text-anchor="middle">BOSS</text>
+          <path class="d-edge" d="M540,108 V176" marker-end="url(#m-a)"/>
+          <rect class="d-card fill-green" x="385" y="178" width="310" height="58" rx="6"/>
+          <text class="d-title xs" x="540" y="202" text-anchor="middle">9 direct compact roles</text>
+          <text class="d-sub xs" x="540" y="221" text-anchor="middle">same 5 LLM + 4 procedures as B4</text>
+          <text class="d-cap" x="540" y="272" text-anchor="middle">same dependency DAG · Manager layer omitted</text>
+          <text class="d-cap" x="540" y="292" text-anchor="middle">same limits · Manager layer omitted</text>
 
-          <!-- B3: BOSS -> 3 workers (BEF) -->
-          <rect class="d-card ink" x="620" y="70" width="110" height="44" rx="6"/>
-          <text class="d-title xs" x="675" y="97" text-anchor="middle">BOSS</text>
-          <rect class="d-card fill-green" x="592" y="176" width="52" height="40" rx="6"/>
-          <text class="d-sub xs" x="618" y="200" text-anchor="middle">[B]</text>
-          <rect class="d-card fill-green" x="649" y="176" width="52" height="40" rx="6"/>
-          <text class="d-sub xs" x="675" y="200" text-anchor="middle">[E]</text>
-          <rect class="d-card fill-green" x="706" y="176" width="52" height="40" rx="6"/>
-          <text class="d-sub xs" x="732" y="200" text-anchor="middle">[F]</text>
-          <path class="d-edge" d="M675,114 V150 H618 V174" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M675,150 V174" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M675,150 H732 V174" marker-end="url(#m-a)"/>
-          <text class="d-sub xs" x="675" y="238" text-anchor="middle">max_depth = 1</text>
-
-          <!-- B4: BOSS -> MANAGER -> workers -->
-          <rect class="d-card ink" x="890" y="62" width="110" height="40" rx="6"/>
-          <text class="d-title xs" x="945" y="87" text-anchor="middle">BOSS</text>
-          <rect class="d-card amber" x="890" y="132" width="110" height="40" rx="6"/>
-          <text class="d-title xs" x="945" y="157" text-anchor="middle">MANAGER ×BEF</text>
-          <rect class="d-card fill-green" x="892" y="202" width="50" height="36" rx="6"/>
-          <text class="d-sub xs" x="917" y="224" text-anchor="middle">wkr</text>
-          <rect class="d-card fill-green" x="948" y="202" width="50" height="36" rx="6"/>
-          <text class="d-sub xs" x="973" y="224" text-anchor="middle">wkr</text>
-          <path class="d-edge" d="M945,102 V130" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M945,172 V186 H917 V200" marker-end="url(#m-a)"/>
-          <path class="d-edge" d="M945,186 H973 V200" marker-end="url(#m-a)"/>
-          <text class="d-sub xs" x="945" y="260" text-anchor="middle">max_depth = 3</text>
+          <rect class="d-card ink" x="835" y="54" width="130" height="42" rx="6"/><text class="d-title xs" x="900" y="80" text-anchor="middle">BOSS</text>
+          <path class="d-edge" d="M900,96 V126" marker-end="url(#m-a)"/>
+          <rect class="d-card amber" x="805" y="128" width="190" height="44" rx="6"/><text class="d-title xs" x="900" y="155" text-anchor="middle">4 phase Managers</text>
+          <path class="d-edge" d="M900,172 V202" marker-end="url(#m-a)"/>
+          <rect class="d-card fill-green" x="805" y="204" width="190" height="52" rx="6"/>
+          <text class="d-title xs" x="900" y="226" text-anchor="middle">9 compact workers</text>
+          <text class="d-sub xs" x="900" y="244" text-anchor="middle">5 LLM + 4 procedures</text>
+          <path class="d-edge red dashed" d="M995,230 H1032 V150 H997" marker-end="url(#m-a)"/>
+          <text class="d-cap" x="900" y="286" text-anchor="middle">phase failure → Manager-selected same-phase recovery</text>
         </svg>
       </div>
-      <div class="legend">
-        <span><i class="li-blue"></i> OpenHands baseline (flat)</span>
-        <span><i class="li-ink"></i> BOSS (Arise)</span>
-        <span><i class="li-amber"></i> MANAGER</span>
-        <span><i class="li-green"></i> WORKER · [B]uild [E]xploit [F]ix</span>
-      </div>
-      <figcaption><b>Fig 2.</b> All four share the same worker tool surface and the same <code>Build → Exploit → Fix → Report</code> contract; only the shape of the team changes. Evaluated strictly from Postgres events plus <code>runs/&lt;id&gt;/</code> artifacts by blocking LLM judges (CVE-reproduced, binary-genuine, patch-root-cause, execution-provenance).</figcaption>
+      <div class="legend"><span><i class="li-blue"></i> flat baseline</span><span><i class="li-amber"></i> phase Manager</span><span><i class="li-green"></i> role worker</span><span><i class="li-red"></i> bounded recovery</span></div>
+      <figcaption><b>Fig 2.</b> B4 <code>b4-adaptive-manager-v2</code> and B3 <code>b3-direct-compact-v1</code> share the same host-owned compact route and resolved behavioral settings. B3 omits only the Manager layer; dependency-sink expansion preserves scoped source context across flattening. After a required B4 failure, the Manager may reissue a compact role or add same-phase specialists; the Host expands the remaining same-phase set only when the Manager output is invalid and no safe selection remains.</figcaption>
     </figure>
     <table class="grid" data-reveal>
-      <thead><tr><th>Cell</th><th>Family</th><th>Topology</th><th>Isolates</th></tr></thead>
+      <thead><tr><th>Cell</th><th>Topology</th><th>Use</th><th>Interpretation</th></tr></thead>
       <tbody>
-        <tr><td class="cell">N1</td><td>OpenHands, flat</td><td>single linear session (<code>mode: flat</code>)</td><td>the baseline</td></tr>
-        <tr><td class="cell">N2</td><td>OpenHands, flat</td><td>agent + native subagents (2 levels)</td><td>ad-hoc subagent value (vs N1)</td></tr>
-        <tr><td class="cell">B3</td><td>Arise, hierarchical</td><td>BOSS → BEF workers (<code>max_depth 1</code>)</td><td>manager tier removed</td></tr>
-        <tr><td class="cell">B4</td><td>Arise, hierarchical</td><td>BOSS → managers → workers (<code>max_depth 3</code>)</td><td>the manager tier (vs B3)</td></tr>
+        <tr><td class="cell">N1</td><td>one flat OpenHands session</td><td>confirmatory baseline</td><td>naive single-agent performance</td></tr>
+        <tr><td class="cell">B4</td><td>BOSS → four phase Managers → compact roles; LLM recovery after required failure</td><td>confirmatory treatment</td><td>adaptive hierarchical system</td></tr>
+        <tr><td class="cell">B3</td><td>BOSS → nine direct compact roles</td><td>development ablation</td><td>Manager-layer omission</td></tr>
       </tbody>
     </table>
   </section>
@@ -331,8 +313,8 @@
   <!-- ============ 03 — SYSTEM ARCHITECTURE ============ -->
   <section id="arch">
     <div class="kick" data-reveal><b>03</b> &nbsp;/&nbsp; System architecture</div>
-    <h2 data-reveal>Hexagonal: a pure core, adapters at the edge</h2>
-    <p class="intro" data-reveal>The <strong>domain core</strong> depends only on the standard library and its own <code>Protocol</code> ports — it never imports infrastructure (a pre-commit hook enforces this). Everything concrete (Postgres, LLM providers, the OpenHands worker, the SEC-bench container runtime) is an <strong>adapter</strong> injected at startup. <code>bootstrap/composition.py</code> is the <em>only</em> file allowed to reach across the boundary into <code>plugins/</code>.</p>
+    <h2 data-reveal>Hexagonal: domain logic behind ports, adapters at the edge</h2>
+    <p class="intro" data-reveal>The <strong>domain core</strong> owns orchestration logic and its <code>Protocol</code> ports. It uses declared libraries such as Pydantic and Jinja2, but never imports <code>infrastructure/</code> (a pre-commit hook enforces this). Concrete Postgres, LLM, worker, and container adapters are injected at startup. <code>bootstrap/composition.py</code> is the <em>only</em> file allowed to reach across the boundary into <code>plugins/</code>.</p>
     <figure data-reveal>
       <div class="frame l">
         <svg viewBox="0 0 1080 500" role="img" aria-label="Hexagonal layered architecture">
@@ -359,11 +341,11 @@
           <!-- inner: domain + ports -->
           <rect class="d-card green" x="166" y="210" width="448" height="222" rx="8"/>
           <text class="d-layer" x="186" y="234" fill="var(--green-tx)">core/domain/ + core/ports/ · pure</text>
-          <text class="d-sub" x="186" y="251">AgentSession &amp; SharedStore aggregates · 38 frozen events</text>
+          <text class="d-sub" x="186" y="251">AgentSession &amp; SharedStore aggregates · 42 frozen events</text>
           <text class="d-sub" x="186" y="267">value objects · domain services · Protocol ports (14+)</text>
           <rect class="d-card fill-green" x="186" y="292" width="188" height="52" rx="6"/>
           <text class="d-title xs" x="280" y="315" text-anchor="middle">AgentSession</text>
-          <text class="d-sub xs" x="280" y="331" text-anchor="middle">primary · 35/38 events</text>
+          <text class="d-sub xs" x="280" y="331" text-anchor="middle">primary · 39/42 events</text>
           <rect class="d-card fill-green" x="406" y="292" width="188" height="52" rx="6"/>
           <text class="d-title xs" x="500" y="315" text-anchor="middle">SharedStore</text>
           <text class="d-sub xs" x="500" y="331" text-anchor="middle">artifacts + decisions · 3</text>
@@ -388,7 +370,7 @@
 
           <rect class="d-card ink" x="762" y="392" width="296" height="60" rx="6"/>
           <text class="d-title sm" x="910" y="417" text-anchor="middle">experiments/</text>
-          <text class="d-sub" x="910" y="434" text-anchor="middle">B3/B4/N1/N2 eval harness</text>
+          <text class="d-sub" x="910" y="434" text-anchor="middle">N1/B4 confirmatory harness + B3 ablation</text>
 
           <!-- composition wires plugins (down the right side) -->
           <path class="d-edge" d="M710,46 H910 V94" marker-end="url(#h-a)"/>
@@ -407,7 +389,7 @@
         <span><i class="li-ink"></i> infrastructure / bootstrap</span>
         <span><i class="li-amber"></i> security plugin</span>
       </div>
-      <figcaption><b>Fig 3.</b> Dependencies point inward only. The read side (dashboard, evaluators) consumes the event stream through CQRS projections and never touches the write model — so analysis can never corrupt a run.</figcaption>
+      <figcaption><b>Fig 3.</b> Dependencies point inward only. The dashboard reads CQRS projections. Evaluators read immutable events and run artifacts, then invoke external replay and judge adapters; they never mutate the write model.</figcaption>
     </figure>
   </section>
 
@@ -421,21 +403,21 @@
 <pre class="tree">arise-sec-lion/
 ├── <span class="dir">main.py</span>                 <span class="cm"># CLI entry → bootstrap.bootstrap.main()</span>
 ├── <span class="dir t-green">core/</span>                   <span class="cm t-green"># pure domain — never imports infrastructure</span>
-│   ├── <span class="dir">domain/</span>             <span class="cm"># aggregates, 38 frozen events, value objects, services</span>
-│   ├── <span class="dir">ports/</span>              <span class="cm"># Protocol interfaces (event store, LLM, worker, procedure)</span>
+│   ├── <span class="dir">domain/</span>             <span class="cm"># aggregates, 42 frozen events, value objects, services</span>
+│   ├── <span class="dir">ports/</span>              <span class="cm"># Protocol interfaces, including decomposition_policy_port.py</span>
 │   ├── <span class="dir">application/</span>        <span class="cm"># AgentOrchestrator, execution loop, verification, retry</span>
 │   └── <span class="dir">query/</span>              <span class="cm"># CQRS read-side projections</span>
 ├── <span class="dir t-blue">infrastructure/</span>         <span class="cm t-blue"># adapters implementing core/ports/ (Postgres, LiteLLM, OpenHands)</span>
-├── <span class="dir t-amber">plugins/security/</span>       <span class="cm t-amber"># STRICTLY cybersecurity: CVE, container runtime, procedures, crash signature</span>
+├── <span class="dir t-amber">plugins/security/</span>       <span class="cm t-amber"># SEC-bench policy (decomposition_policy.py), roles, runtime, procedures</span>
 ├── <span class="dir">bootstrap/</span>              <span class="cm"># composition root — sole cross-boundary import (composition.py)</span>
 ├── <span class="dir">prompts/</span>                <span class="cm"># 4-tier Jinja2: system → roles → operations → domains</span>
 ├── <span class="dir">presentation/</span>           <span class="cm"># CLI, renderers, formatters</span>
 ├── <span class="dir">query/</span>                  <span class="cm"># FastAPI REST API + React 19 dashboard SPA (web/)</span>
 ├── <span class="dir">config/</span>                 <span class="cm"># Pydantic Settings + YAML overlay hierarchy</span>
-└── <span class="dir">experiments/</span>            <span class="cm"># B3/B4/N1/N2 cells, shared eval harness &amp; criteria</span></pre>
+└── <span class="dir">experiments/</span>            <span class="cm"># N1/B4 confirmatory runner, B3 ablation, evaluator adapters</span></pre>
       </div>
       <div class="legend">
-        <span><i class="li-green"></i> core (stdlib + own ports only)</span>
+        <span><i class="li-green"></i> core (domain logic + own ports; no infrastructure imports)</span>
         <span><i class="li-blue"></i> adapters</span>
         <span><i class="li-amber"></i> security plugin only</span>
         <span><i class="li-ink"></i> composition · prompts · read side</span>
@@ -444,83 +426,89 @@
     </figure>
   </section>
 
-  <!-- ============ 05 — HIERARCHY & ROLES ============ -->
-  <section id="hierarchy">
-    <div class="kick" data-reveal><b>05</b> &nbsp;/&nbsp; Key flow · decomposition</div>
-    <h2 data-reveal>BOSS → MANAGER → WORKER, by recursive assessment</h2>
-    <p class="intro" data-reveal>Every non-root agent starts as <code>PENDING</code> and runs one <code>assess_task</code> call that decides its fate: simple work becomes a <strong>WORKER</strong> that executes directly; complex work becomes a <strong>MANAGER</strong> that decomposes into children and recurses. A leading <code>[Role]</code> bracket routes each worker to the right phase prompt.</p>
+  <!-- ============ 05 — ADAPTIVE ROUTE ============ -->
+  <section id="adaptive">
+    <div class="kick" data-reveal><b>05</b> / Adaptive B4</div>
+    <h2 data-reveal>Compact first; specialists only after evidence of failure</h2>
+    <p class="intro" data-reveal>Trusted host policy deterministically creates the four-phase DAG and compact role children. Managers do not choose the initial route. Only after a required failure does the phase Manager use the existing LLM decomposition path to propose same-phase roles and failure-specific instructions.</p>
     <figure data-reveal>
       <div class="frame m">
-        <svg viewBox="0 0 1080 420" role="img" aria-label="BOSS MANAGER WORKER hierarchy">
-          <defs>
-            <marker id="t-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
-            <marker id="t-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
-            <marker id="t-am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b45309"/></marker>
-          </defs>
-          <!-- BOSS -->
-          <rect class="d-card ink" x="450" y="20" width="180" height="52" rx="6"/>
-          <text class="d-title sm" x="540" y="44" text-anchor="middle">BOSS</text>
-          <text class="d-sub" x="540" y="61" text-anchor="middle">root · evaluate_task</text>
+        <svg viewBox="0 0 1080 430" role="img" aria-label="Adaptive B4 compact and escalated routes">
+          <defs><marker id="t-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
+          <text class="d-role amber" x="60" y="34">phase order</text>
+          <rect class="d-card amber" x="60" y="58" width="190" height="54" rx="6"/><text class="d-title xs" x="155" y="81" text-anchor="middle">Builder Manager</text><text class="d-sub xs" x="155" y="99" text-anchor="middle">Setup → Executor → Verifier</text>
+          <path class="d-edge" d="M250,85 H310" marker-end="url(#t-a)"/>
+          <rect class="d-card amber" x="312" y="58" width="210" height="54" rx="6"/><text class="d-title xs" x="417" y="81" text-anchor="middle">Exploiter Manager</text><text class="d-sub xs" x="417" y="99" text-anchor="middle">Repro → Validator</text>
+          <path class="d-edge" d="M522,85 H582" marker-end="url(#t-a)"/>
+          <rect class="d-card amber" x="584" y="58" width="230" height="54" rx="6"/><text class="d-title xs" x="699" y="81" text-anchor="middle">Fixer Manager</text><text class="d-sub xs" x="699" y="99" text-anchor="middle">RCA → Apply → Validate</text>
+          <path class="d-edge" d="M814,85 H874" marker-end="url(#t-a)"/>
+          <rect class="d-card amber" x="876" y="58" width="150" height="54" rx="6"/><text class="d-title xs" x="951" y="81" text-anchor="middle">Reporter Manager</text><text class="d-sub xs" x="951" y="99" text-anchor="middle">synthesis</text>
 
-          <!-- split junction at y=104 to 4 phase managers -->
-          <path class="d-edge" d="M540,72 V104 H160 V148" marker-end="url(#t-am)"/>
-          <path class="d-edge" d="M540,104 H440 V148" marker-end="url(#t-am)"/>
-          <path class="d-edge" d="M540,104 H700 V148" marker-end="url(#t-am)"/>
-          <path class="d-edge" d="M540,104 H930 V148" marker-end="url(#t-g)"/>
+          <text class="d-role green" x="60" y="166">compact route · 9 leaves</text>
+          <rect class="d-card fill-green" x="60" y="190" width="966" height="58" rx="6"/>
+          <text class="d-anno" x="84" y="216">Build-Setup · Build-Executor · Build-Verifier · Repro-Creator · Exploit-Validator</text>
+          <text class="d-anno" x="84" y="236">Root-Cause-Analyst · Patch-Applier · Patch-Validator · Reporter</text>
+          <path class="d-edge red dashed" d="M543,248 V292" marker-end="url(#t-a)"/>
+          <text class="d-anno sm red" x="562" y="276">phase gate failed + failure digest</text>
 
-          <!-- 4 phase managers/roles -->
-          <rect class="d-card amber" x="70" y="150" width="180" height="52" rx="6"/>
-          <text class="d-title sm" x="160" y="174" text-anchor="middle">Builder</text>
-          <text class="d-sub" x="160" y="191" text-anchor="middle">[Builder] · MANAGER</text>
-
-          <rect class="d-card amber" x="350" y="150" width="180" height="52" rx="6"/>
-          <text class="d-title sm" x="440" y="174" text-anchor="middle">Exploiter</text>
-          <text class="d-sub" x="440" y="191" text-anchor="middle">[Exploiter] · MANAGER</text>
-
-          <rect class="d-card amber" x="610" y="150" width="180" height="52" rx="6"/>
-          <text class="d-title sm" x="700" y="174" text-anchor="middle">Fixer</text>
-          <text class="d-sub" x="700" y="191" text-anchor="middle">[Fixer] · MANAGER</text>
-
-          <rect class="d-card green" x="840" y="150" width="180" height="52" rx="6"/>
-          <text class="d-title sm" x="930" y="174" text-anchor="middle">Reporter</text>
-          <text class="d-sub" x="930" y="191" text-anchor="middle">[Reporter] · WORKER leaf</text>
-
-          <!-- Exploiter expands into workers -->
-          <path class="d-edge" d="M440,202 V236 H330 V276" marker-end="url(#t-g)"/>
-          <path class="d-edge" d="M440,236 V276" marker-end="url(#t-g)"/>
-          <path class="d-edge" d="M440,236 H556 V276" marker-end="url(#t-g)"/>
-
-          <rect class="d-card fill-green" x="252" y="278" width="156" height="50" rx="6"/>
-          <text class="d-title xs" x="330" y="300" text-anchor="middle">PoC author</text>
-          <text class="d-sub xs" x="330" y="316" text-anchor="middle">[Exploit-Builder]</text>
-          <rect class="d-card fill-green" x="418" y="278" width="156" height="50" rx="6"/>
-          <text class="d-title xs" x="496" y="300" text-anchor="middle">validator</text>
-          <text class="d-sub xs" x="496" y="316" text-anchor="middle">[Exploit-Validator]</text>
-          <rect class="d-card fill-green" x="150" y="278" width="90" height="50" rx="6"/>
-          <text class="d-sub xs" x="195" y="306" text-anchor="middle">…workers</text>
-
-          <!-- assess recursion note in the clear band under Fixer / Reporter -->
-          <text class="d-anno sm amber" x="612" y="240" text-anchor="start">assess_task decides each PENDING agent —</text>
-          <text class="d-anno sm amber" x="612" y="256" text-anchor="start">execute → WORKER · decompose → MANAGER (recurse)</text>
-
-          <!-- report note (children -> parent) -->
-          <text class="d-cap" x="540" y="392" text-anchor="middle">children return structured Reports up the tree; a parent completes when all children report (partial success if any succeed)</text>
+          <text class="d-role red" x="60" y="324">targeted escalation</text>
+          <rect class="d-card fill-red" x="60" y="346" width="966" height="58" rx="6"/>
+          <text class="d-anno" x="84" y="372">Manager receives failure evidence → proposes same-phase roles + failure-specific instructions</text>
+          <text class="d-anno" x="84" y="392">host drops unsafe choices · closes hard dependencies · binds trusted role config · records provenance</text>
         </svg>
       </div>
-      <div class="legend">
-        <span><i class="li-ink"></i> BOSS (one per run)</span>
-        <span><i class="li-amber"></i> MANAGER · decomposes</span>
-        <span><i class="li-green"></i> WORKER · executes a phase</span>
-      </div>
-      <figcaption><b>Fig 5.</b> The three orchestrator operations — <code>assess_task</code>, <code>evaluate_task</code>, <code>execute_task</code> — are plain methods, deliberately <em>not</em> wrapped in a pipeline abstraction. Bracket-first detection stops a Fixer leaf (which legitimately mentions "exploit") from rendering the Exploiter prompt.</figcaption>
+      <figcaption><b>Fig 5.</b> The host never interprets failure keywords. It drops unsafe selections, closes hard dependencies, binds trusted role prompts/models/procedures, schedules execution, and records per-role provenance as <code>host_policy</code>, <code>llm</code>, or <code>host_repair</code>. Manager evidence references flow into child briefings and worker prompts. Full remaining same-phase expansion is only the explicit-invalid-decision fail-safe.</figcaption>
     </figure>
+  </section>
+
+  <!-- ============ 06 — WORKER TYPES ============ -->
+  <section id="roles">
+    <div class="kick" data-reveal><b>06</b> / Worker architecture</div>
+    <h2 data-reveal>Execution mechanism and work type are separate</h2>
+    <p class="intro" data-reveal><strong>Mechanical vs LLM</strong> describes execution. <strong>Coding, reasoning, hybrid, and synthesis</strong> describe the work. “Thinking” adds no distinct category. The implemented <code>worker.model_overrides</code> map routes every reasoning, hybrid, and synthesis role to GPT-5.3 Codex.</p>
+    <figure data-reveal>
+      <div class="frame m">
+        <svg viewBox="0 0 1080 300" role="img" aria-label="Mechanical versus LLM worker routing">
+          <defs><marker id="w-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
+          <rect class="d-card ink" x="40" y="110" width="180" height="58" rx="6"/><text class="d-title sm" x="130" y="135" text-anchor="middle">Role task</text><text class="d-sub" x="130" y="153" text-anchor="middle">inputs + criteria</text>
+          <path class="d-edge" d="M220,139 H300" marker-end="url(#w-a)"/>
+          <rect class="d-card amber" x="302" y="96" width="230" height="86" rx="6"/><text class="d-title xs" x="417" y="121" text-anchor="middle">Frozen command and verdict?</text><text class="d-sub xs" x="417" y="144" text-anchor="middle">no hypothesis or semantic choice</text><text class="d-sub xs" x="417" y="162" text-anchor="middle">repeatable host evidence</text>
+          <path class="d-edge green" d="M532,118 H650" marker-end="url(#w-a)"/><text class="d-cap" x="590" y="108" text-anchor="middle">yes</text>
+          <rect class="d-card fill-green" x="652" y="60" width="360" height="72" rx="6"/><text class="d-title sm" x="832" y="87" text-anchor="middle">Host procedure attempt · no LLM</text><text class="d-sub" x="832" y="108" text-anchor="middle">ProcedureEvidence → machine gate</text>
+          <path class="d-edge blue" d="M532,160 H650 V222" marker-end="url(#w-a)"/><text class="d-cap" x="590" y="150" text-anchor="middle">no</text>
+          <rect class="d-card fill-blue" x="652" y="188" width="360" height="82" rx="6"/><text class="d-title sm" x="832" y="215" text-anchor="middle">LLM worker</text><text class="d-sub" x="832" y="237" text-anchor="middle">coding → GPT-5.4 mini</text><text class="d-sub" x="832" y="255" text-anchor="middle">reasoning / hybrid / synthesis → GPT-5.3 Codex</text>
+        </svg>
+      </div>
+      <figcaption><b>Fig 6.</b> A mechanical task needs structured complete inputs, a predetermined command sequence, frozen machine-readable pass/fail criteria, host-authenticated output, and deterministic repetition. Ambiguous root-cause selection, candidate comparison, and evidence conflict resolution stay LLM-backed.</figcaption>
+    </figure>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Phase</th><th>Role</th><th>Mechanism</th><th>Work type</th><th>Target model</th></tr></thead>
+      <tbody>
+        <tr><td>Builder</td><td class="cell">Build-Setup</td><td>LLM</td><td>coding/execution</td><td>GPT-5.4 mini</td></tr>
+        <tr><td>Builder</td><td class="cell">Build-Executor</td><td>LLM</td><td>coding/execution</td><td>GPT-5.4 mini</td></tr>
+        <tr><td>Builder</td><td class="cell">Build-Verifier</td><td>host procedure</td><td>mechanical validation</td><td>none</td></tr>
+        <tr><td>Exploiter</td><td class="cell">PoC-Researcher</td><td>LLM</td><td>reasoning</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Exploiter</td><td class="cell">Data-Flow-Analyst</td><td>LLM</td><td>reasoning</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Exploiter</td><td class="cell">PoC-Tester</td><td>LLM</td><td>reasoning/validation</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Exploiter</td><td class="cell">Forward-Instrumentator</td><td>LLM</td><td>hybrid reasoning/coding</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Exploiter</td><td class="cell">Repro-Creator</td><td>LLM</td><td>coding/execution</td><td>GPT-5.4 mini</td></tr>
+        <tr><td>Exploiter</td><td class="cell">Exploit-Validator</td><td>host procedure</td><td>mechanical validation</td><td>none</td></tr>
+        <tr><td>Fixer</td><td class="cell">Root-Cause-Analyst</td><td>LLM</td><td>reasoning</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Fixer</td><td class="cell">Candidate-Reviewer</td><td>LLM</td><td>reasoning</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Fixer</td><td class="cell">Regression-Tester</td><td>LLM</td><td>reasoning/validation</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Fixer</td><td class="cell">Patch-Applier</td><td>host procedure</td><td>mechanical transformation</td><td>none</td></tr>
+        <tr><td>Fixer</td><td class="cell">Patch-Validator</td><td>host procedure</td><td>mechanical validation</td><td>none</td></tr>
+        <tr><td>Fixer</td><td class="cell">Fix-Aggregator</td><td>LLM</td><td>synthesis</td><td>GPT-5.3 Codex</td></tr>
+        <tr><td>Reporter</td><td class="cell">Reporter</td><td>LLM</td><td>synthesis/reasoning</td><td>GPT-5.3 Codex</td></tr>
+      </tbody>
+    </table>
   </section>
 
   <!-- ============ 06 — SELF-HEALING FAILURE LOOP ============ -->
   <section id="heal">
-    <div class="kick" data-reveal><b>06</b> &nbsp;/&nbsp; Key flow · resilience</div>
+    <div class="kick" data-reveal><b>07</b> / Resilience</div>
     <h2 data-reveal>Self-healing: a crash becomes context, not a dead end</h2>
-    <p class="intro" data-reveal>When a worker crashes it usually carries <em>no</em> retry context. Arise fixes that deterministically — <strong>no LLM involved</strong>. The failure is distilled into a bounded digest and injected into the next attempt; if every sibling worker still fails, the parent doesn't give up — it <strong>re-decomposes, informed by exactly why the last attempt failed</strong>.</p>
+    <p class="intro" data-reveal>When a worker crashes it usually carries <em>no</em> retry context. Arise fixes that deterministically — <strong>no LLM involved</strong>. The failure is distilled into a bounded digest and injected into the next attempt. If required workers still fail, only their Manager may <strong>re-decompose from the recorded failure evidence</strong>; non-Manager parents fail upward.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 560" role="img" aria-label="Self-healing failure loop">
@@ -561,11 +549,11 @@
 
           <!-- all children fail -> redecomposition (down) -->
           <path class="d-edge green" d="M360,392 V430" marker-end="url(#s-g)"/>
-          <text class="d-anno sm green" x="378" y="416" text-anchor="start">all sibling workers failed, budget left</text>
+          <text class="d-anno sm green" x="378" y="416" text-anchor="start">required sibling workers failed, Manager budget left</text>
 
           <rect class="d-card fill-green" x="190" y="432" width="340" height="58" rx="6"/>
           <text class="d-title sm" x="360" y="456" text-anchor="middle">RedecompositionTriggered</text>
-          <text class="d-sub" x="360" y="474" text-anchor="middle">failure_history → parent re-plans (informed)</text>
+          <text class="d-sub" x="360" y="474" text-anchor="middle">failure_history → Manager re-plans (informed)</text>
 
           <!-- right side: informed decomposition target -->
           <rect class="d-card green" x="700" y="432" width="320" height="58" rx="6"/>
@@ -589,18 +577,18 @@
         <span><i class="li-amber"></i> retry gate</span>
         <span><i class="li-green"></i> informed re-decomposition</span>
       </div>
-      <figcaption><b>Fig 6.</b> The retry edge wraps the outside margin back to the worker (bounded by <code>verification_max_retries</code>); only when every sibling fails does the parent escalate to <code>RedecompositionTriggered</code>, seeding the new decomposition prompt with the prior failures while keeping the cached prompt prefix byte-identical.</figcaption>
+      <figcaption><b>Fig 7.</b> The retry edge wraps the outside margin back to the worker (bounded by <code>verification_max_retries</code>); when required sibling workers fail, only their Manager may emit <code>RedecompositionTriggered</code>. The Manager prompt receives prior failures while its cached prefix remains byte-identical; non-Manager parents fail upward.</figcaption>
     </figure>
   </section>
 
   <!-- ============ 07 — PROCEDURE TIER ============ -->
   <section id="proc">
-    <div class="kick" data-reveal><b>07</b> &nbsp;/&nbsp; Key flow · determinism</div>
-    <h2 data-reveal>A deterministic tier for tasks that don't need an LLM</h2>
-    <p class="intro" data-reveal>Some subtasks are <em>fixed procedures</em> — a validator that just re-runs a benchmark harness and checks the result. Behind a flag (<code>procedural_dispatch</code>), those run <strong>host-side with zero LLM turns</strong>: no prompt, no worker session, no cost. The verdict is computed by Arise and event-sourced as <strong>agent-unforgeable evidence</strong>, closing a fabrication gap where an agent could write <code>VERDICT: PASS</code> without ever running the exploit.</p>
+    <div class="kick" data-reveal><b>08</b> / Deterministic procedures</div>
+    <h2 data-reveal>Deterministic Host gates with one bounded repair</h2>
+    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, each Arise Host procedure attempt uses <strong>zero LLM turns</strong>. An initial Host failure permits exactly one LLM-backed repair and, if that repair completes, exactly one Host recheck. “Host” means the orchestrator process, not a human. Arise captures argv evidence and computes the in-run verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative. Commands still execute in the run's mutable shared worker container, so fresh external replay remains the confirmatory authority.</p>
     <figure data-reveal>
       <div class="frame m">
-        <svg viewBox="0 0 1080 520" role="img" aria-label="Procedural dispatch ladder and escalation">
+        <svg viewBox="0 0 1080 690" role="img" aria-label="Procedure lifecycle with one initial Host attempt, one agentic repair, and one Host recheck">
           <defs>
             <marker id="p-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
             <marker id="p-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
@@ -609,103 +597,207 @@
           </defs>
 
           <!-- top: execute_task -->
-          <rect class="d-card ink" x="80" y="20" width="260" height="52" rx="6"/>
-          <text class="d-title sm" x="210" y="44" text-anchor="middle">execute_task (WORKER)</text>
-          <text class="d-sub" x="210" y="61" text-anchor="middle">_resolve_procedure_ref</text>
-          <path class="d-edge" d="M210,72 V96" marker-end="url(#p-a)"/>
+          <rect class="d-card ink" x="60" y="20" width="270" height="52" rx="6"/>
+          <text class="d-title sm" x="195" y="44" text-anchor="middle">execute_task (WORKER)</text>
+          <text class="d-sub" x="195" y="61" text-anchor="middle">_resolve_procedure_ref</text>
+          <path class="d-edge" d="M195,72 V96" marker-end="url(#p-a)"/>
 
           <!-- decision ladder — left column of 4 rungs -->
-          <rect class="d-card amber" x="80" y="98" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="119" text-anchor="middle">execution_mode = "agentic"</text>
-          <text class="d-sub xs" x="210" y="134" text-anchor="middle">bypass — always agentic</text>
+          <rect class="d-card amber" x="60" y="98" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="119" text-anchor="middle">Host executor.match(task)</text>
+          <text class="d-sub xs" x="195" y="134" text-anchor="middle">no match → ordinary agentic path</text>
 
-          <rect class="d-card amber" x="80" y="158" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="179" text-anchor="middle">"procedural" + resolve(ref)</text>
-          <text class="d-sub xs" x="210" y="194" text-anchor="middle">explicit registered procedure</text>
+          <rect class="d-card amber" x="60" y="158" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="179" text-anchor="middle">match returns ref</text>
+          <text class="d-sub xs" x="195" y="194" text-anchor="middle">Host-registry candidate</text>
 
-          <rect class="d-card amber" x="80" y="218" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="239" text-anchor="middle">"procedural" + unknown ref</text>
-          <text class="d-sub xs" x="210" y="254" text-anchor="middle">warn → fail open → auto</text>
+          <rect class="d-card amber" x="60" y="218" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="239" text-anchor="middle">executor.resolve(ref)</text>
+          <text class="d-sub xs" x="195" y="254" text-anchor="middle">stale ref → ordinary agentic path</text>
 
-          <rect class="d-card amber" x="80" y="278" width="260" height="46" rx="6"/>
-          <text class="d-title xs" x="210" y="299" text-anchor="middle">"auto" → executor.match()</text>
-          <text class="d-sub xs" x="210" y="314" text-anchor="middle">registry decides (may be None)</text>
+          <rect class="d-card amber" x="60" y="278" width="270" height="46" rx="6"/>
+          <text class="d-title xs" x="195" y="299" text-anchor="middle">resolved Host ref</text>
+          <text class="d-sub xs" x="195" y="314" text-anchor="middle">zero-LLM procedure path</text>
 
           <!-- rung to rung -->
-          <path class="d-edge" d="M210,144 V158" marker-end="url(#p-a)"/>
-          <path class="d-edge" d="M210,204 V218" marker-end="url(#p-a)"/>
-          <path class="d-edge" d="M210,264 V278" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,144 V158" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,204 V218" marker-end="url(#p-a)"/>
+          <path class="d-edge" d="M195,264 V278" marker-end="url(#p-a)"/>
 
           <!-- AGENTIC lane (right-top) -->
-          <rect class="d-card blue" x="470" y="98" width="250" height="52" rx="6"/>
-          <text class="d-title sm" x="595" y="122" text-anchor="middle">Agentic worker</text>
-          <text class="d-sub" x="595" y="139" text-anchor="middle">WorkerToolPort · LLM · verify</text>
-          <!-- rung1 (explicit agentic) -> agentic worker -->
-          <path class="d-edge blue" d="M340,121 H468" marker-end="url(#p-b)"/>
-          <text class="d-anno sm blue" x="404" y="112" text-anchor="middle">ref = None</text>
+          <rect class="d-card blue" x="410" y="98" width="300" height="56" rx="6"/>
+          <text class="d-title sm" x="560" y="122" text-anchor="middle">Ordinary agentic worker</text>
+          <text class="d-sub" x="560" y="140" text-anchor="middle">only when no Host procedure resolves</text>
+          <!-- no Host match -> agentic worker -->
+          <path class="d-edge blue" d="M330,121 H408" marker-end="url(#p-b)"/>
+          <text class="d-anno sm blue" x="369" y="112" text-anchor="middle">no trusted ref</text>
 
-          <!-- PROCEDURAL lane -->
-          <rect class="d-card fill-blue" x="470" y="278" width="250" height="46" rx="6"/>
-          <text class="d-title xs" x="595" y="299" text-anchor="middle">start_procedure(ref)</text>
-          <text class="d-sub xs" x="595" y="314" text-anchor="middle">ProcedureExecutionStarted</text>
-          <!-- fan-in bus: rung2 (resolve) + rung4 (auto match) both yield a ref -->
-          <path class="d-edge" d="M340,181 H430"/>
-          <path class="d-edge" d="M340,301 H430"/>
-          <path class="d-edge" d="M430,181 V301"/>
-          <path class="d-edge" d="M430,301 H468" marker-end="url(#p-a)"/>
-          <text class="d-anno sm" x="452" y="252" text-anchor="middle">ref</text>
-          <text class="d-cap" x="210" y="344" text-anchor="middle">rung 3 falls through to auto · no match → agentic</text>
+          <!-- initial Host procedure attempt -->
+          <rect class="d-card blue" x="410" y="274" width="300" height="78" rx="6"/>
+          <text class="d-title sm" x="560" y="298" text-anchor="middle">Initial Host procedure attempt</text>
+          <text class="d-sub" x="560" y="318" text-anchor="middle">start → execute → finish</text>
+          <text class="d-sub" x="560" y="337" text-anchor="middle">Host command evidence · zero LLM</text>
+          <path class="d-edge" d="M330,301 H408" marker-end="url(#p-a)"/>
 
-          <path class="d-edge blue" d="M595,324 V352" marker-end="url(#p-b)"/>
-          <rect class="d-card blue" x="470" y="354" width="250" height="60" rx="6"/>
-          <text class="d-title xs" x="595" y="377" text-anchor="middle">executor.execute — host-side</text>
-          <text class="d-sub xs" x="595" y="395" text-anchor="middle">secb repro×3 / patch / build · 0 LLM</text>
-          <path class="d-edge blue" d="M595,414 V442" marker-end="url(#p-b)"/>
+          <rect class="d-card fill-green" x="780" y="274" width="240" height="66" rx="6"/>
+          <text class="d-title xs" x="900" y="300" text-anchor="middle">success → WorkCompleted</text>
+          <text class="d-sub xs" x="900" y="320" text-anchor="middle">protected Host evidence</text>
+          <path class="d-edge green" d="M710,300 H778" marker-end="url(#p-g)"/>
 
-          <rect class="d-card blue" x="470" y="444" width="250" height="52" rx="6"/>
-          <text class="d-title xs" x="595" y="465" text-anchor="middle">finish_procedure(evidence)</text>
-          <text class="d-sub xs" x="595" y="482" text-anchor="middle">ProcedureEvidence per command</text>
+          <!-- bounded recovery -->
+          <rect class="d-card fill-red" x="410" y="382" width="300" height="54" rx="6"/>
+          <text class="d-title xs" x="560" y="404" text-anchor="middle">Host failure evidence + digest</text>
+          <text class="d-sub xs" x="560" y="422" text-anchor="middle">initial failure remains event-sourced</text>
+          <path class="d-edge red" d="M560,352 V380" marker-end="url(#p-r)"/>
 
-          <!-- outcomes on far right -->
-          <rect class="d-card fill-green" x="800" y="354" width="220" height="52" rx="6"/>
-          <text class="d-title xs" x="910" y="375" text-anchor="middle">success → WorkCompleted</text>
-          <text class="d-sub xs" x="910" y="392" text-anchor="middle">normal verification pipeline</text>
-          <path class="d-edge green" d="M720,376 H798" marker-end="url(#p-g)"/>
+          <rect class="d-card fill-red" x="410" y="466" width="300" height="58" rx="6"/>
+          <text class="d-title xs" x="560" y="490" text-anchor="middle">Exactly one agentic repair</text>
+          <text class="d-sub xs" x="560" y="510" text-anchor="middle">LLM receives the procedure failure digest</text>
+          <path class="d-edge red" d="M560,436 V464" marker-end="url(#p-r)"/>
 
-          <rect class="d-card fill-red" x="800" y="444" width="220" height="52" rx="6"/>
-          <text class="d-title xs" x="910" y="465" text-anchor="middle">fail → digest + WorkFailed</text>
-          <text class="d-sub xs" x="910" y="482" text-anchor="middle">source = procedure_failure</text>
-          <path class="d-edge red" d="M720,470 H798" marker-end="url(#p-r)"/>
+          <rect class="d-card fill-red" x="780" y="466" width="240" height="58" rx="6"/>
+          <text class="d-title xs" x="900" y="490" text-anchor="middle">repair fails → terminal</text>
+          <text class="d-sub xs" x="900" y="510" text-anchor="middle">no Host recheck</text>
+          <path class="d-edge red" d="M710,490 H778" marker-end="url(#p-r)"/>
 
-          <!-- escalation: procedure fail -> exactly one agentic retry (perimeter up to agentic lane) -->
-          <path class="d-edge red dashed" d="M1020,470 H1052 V124 H722" marker-end="url(#p-r)"/>
-          <text class="d-anno sm red" x="1066" y="300" transform="rotate(-90 1066 300)" text-anchor="middle">1 guaranteed agentic retry (carries digest)</text>
+          <rect class="d-card blue" x="410" y="556" width="300" height="66" rx="6"/>
+          <text class="d-title xs" x="560" y="580" text-anchor="middle">Exactly one Host procedure recheck</text>
+          <text class="d-sub xs" x="560" y="600" text-anchor="middle">repair WorkCompleted is provisional</text>
+          <path class="d-edge blue dashed" d="M560,524 V554" marker-end="url(#p-b)"/>
+          <text class="d-anno sm blue" x="575" y="542" text-anchor="start">repair completes</text>
+
+          <rect class="d-card fill-green" x="780" y="548" width="240" height="54" rx="6"/>
+          <text class="d-title xs" x="900" y="570" text-anchor="middle">recheck success → complete</text>
+          <text class="d-sub xs" x="900" y="588" text-anchor="middle">protected Host evidence</text>
+          <path class="d-edge green" d="M710,574 H778" marker-end="url(#p-g)"/>
+
+          <rect class="d-card fill-red" x="780" y="622" width="240" height="54" rx="6"/>
+          <text class="d-title xs" x="900" y="644" text-anchor="middle">recheck fails → terminal</text>
+          <text class="d-sub xs" x="900" y="662" text-anchor="middle">no further LLM retry</text>
+          <path class="d-edge red" d="M710,598 H744 V649 H778" marker-end="url(#p-r)"/>
 
           <!-- flag note -->
-          <rect class="d-card fill-panel" x="80" y="360" width="330" height="120" rx="6"/>
-          <text class="d-title xs" x="98" y="384" text-anchor="start">settings.orchestration.procedural_dispatch</text>
-          <text class="d-sub" x="98" y="406" text-anchor="start">default OFF → NullProcedureExecutor</text>
-          <text class="d-sub" x="98" y="424" text-anchor="start">→ match/resolve return None/False</text>
-          <text class="d-sub" x="98" y="442" text-anchor="start">→ ladder always yields agentic</text>
-          <text class="d-sub" x="98" y="460" text-anchor="start">→ behavior byte-identical to before</text>
+          <rect class="d-card fill-panel" x="60" y="382" width="270" height="154" rx="6"/>
+          <text class="d-title xs" x="78" y="406" text-anchor="start">procedural_dispatch</text>
+          <text class="d-sub" x="78" y="428" text-anchor="start">default OFF → NullProcedureExecutor</text>
+          <text class="d-sub" x="78" y="448" text-anchor="start">→ match/resolve return None/False</text>
+          <text class="d-sub" x="78" y="468" text-anchor="start">→ ordinary agentic path only</text>
+          <text class="d-cap" x="195" y="504" text-anchor="middle">parent hints, refs, and params</text>
+          <text class="d-cap" x="195" y="521" text-anchor="middle">never override Host dispatch</text>
         </svg>
       </div>
       <div class="legend">
         <span><i class="li-amber"></i> dispatch resolution</span>
-        <span><i class="li-blue"></i> procedural path (0 LLM)</span>
-        <span><i class="li-green"></i> success</span>
-        <span><i class="li-red"></i> failure → 1 agentic retry</span>
+        <span><i class="li-blue"></i> Host attempt / recheck</span>
+        <span><i class="li-green"></i> protected Host success evidence</span>
+        <span><i class="li-red"></i> bounded repair / terminal failure</span>
       </div>
-      <figcaption><b>Fig 7.</b> A procedure is dispatched at most once — a failed procedural attempt escalates to exactly one agentic retry carrying the procedure's digest. For SEC-bench, <code>[Exploit-Validator]</code> → <code>secb_exploit_validation</code> and <code>[Patch-Validator]</code> → <code>secb_patch_validation</code>; the verdict is decided by matching the observed crash signature against the CVE oracle across 3/3 runs.</figcaption>
+      <figcaption><b>Fig 8.</b> A procedure-backed role starts with one Host attempt. Initial failure records Host evidence and permits exactly one digest-bearing agentic repair. If the repair completes, the orchestrator suppresses its terminal <code>WorkCompleted</code> and runs exactly one Host recheck. Within that recovery path, only recheck success completes the role with protected Host evidence; repair or recheck failure is terminal and cannot trigger another LLM retry.</figcaption>
     </figure>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Role</th><th>Procedure</th><th>PASS</th><th>Host attempt FAIL</th></tr></thead>
+      <tbody>
+        <tr><td class="cell">Build-Verifier</td><td><code>secb_build_validation</code></td><td>build exits 0; every declared executable ELF initializes the configured sanitizer</td><td>timeout, nonzero exit, non-ELF/non-executable path, missing sanitizer runtime</td></tr>
+        <tr><td class="cell">Exploit-Validator</td><td><code>secb_exploit_validation</code></td><td>complete frozen crash signature and consistent termination match 3/3; complete UBSan evidence may exit 0</td><td>unsafe/missing input, timeout, termination drift, incomplete or mismatched sanitizer/access/top-frame</td></tr>
+        <tr><td class="cell">Patch-Applier</td><td><code>secb_patch_apply</code></td><td>approved PatchPlan validates and renders exactly</td><td>schema/path/anchor/scope mismatch or protected-path edit</td></tr>
+        <tr><td class="cell">Patch-Validator</td><td><code>secb_patch_validation</code></td><td>patch applies, build succeeds, replay is sanitizer-free 3/3 with exit 0 or the frozen dataset oracle</td><td>timeout, exit outside the accepted set, signal, assertion, sanitizer, or crash</td></tr>
+      </tbody>
+    </table>
+    <p data-reveal>The agent-authored <code>repro.sh</code> is parsed, not executed. Its final <code>exec "$BIN"</code> accepts only inert arguments with one <code>$POC</code>, or a final stdin redirect. Valid examples are OpenEXR <code>exec "$BIN" -v "$POC" /dev/null</code> and FAAD2 <code>exec "$BIN" "$POC" -o /dev/null</code>; shell control, substitution, wrappers, pipes, setup, and other redirection fail closed.</p>
   </section>
 
-  <!-- ============ 08 — REFERENCE ============ -->
+  <!-- ============ 09 — EVALUATOR ============ -->
+  <section id="evaluator">
+    <div class="kick" data-reveal><b>09</b> / Success and judges</div>
+    <h2 data-reveal>Mechanical truth first; semantic judgment stays separate</h2>
+    <p class="intro" data-reveal>The authoritative evaluator has no human queue or override. It seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
+    <figure data-reveal>
+      <div class="frame l">
+        <svg viewBox="0 0 1080 570" role="img" aria-label="Mechanical evaluator and automated semantic judge architecture">
+          <defs><marker id="e-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
+          <text class="d-role green" x="50" y="32">mechanical plane</text>
+          <rect class="d-card ink" x="50" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="155" y="78" text-anchor="middle">Frozen input bundle</text><text class="d-sub xs" x="155" y="98" text-anchor="middle">base · PoC · oracle · patch</text>
+          <path class="d-edge" d="M260,85 H310" marker-end="url(#e-a)"/>
+          <rect class="d-card blue" x="312" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="417" y="78" text-anchor="middle">Fresh replay</text><text class="d-sub xs" x="417" y="98" text-anchor="middle">pre×3 · apply/build · post×3</text>
+          <path class="d-edge" d="M522,85 H572" marker-end="url(#e-a)"/>
+          <rect class="d-card green" x="574" y="54" width="220" height="62" rx="6"/><text class="d-title xs" x="684" y="78" text-anchor="middle">Exact oracle + safety</text><text class="d-sub xs" x="684" y="98" text-anchor="middle">class · access · frame · target/base</text>
+          <path class="d-edge" d="M794,85 H844" marker-end="url(#e-a)"/>
+          <rect class="d-card green" x="846" y="54" width="184" height="62" rx="6"/><text class="d-title xs" x="938" y="78" text-anchor="middle">Regression gate</text><text class="d-sub xs" x="938" y="98" text-anchor="middle">independent suite</text>
+
+          <rect class="d-card fill-red" x="50" y="152" width="980" height="64" rx="6"/>
+          <text class="d-title xs" x="70" y="178">Non-overridable failures</text>
+          <text class="d-sub" x="70" y="198">timeout · signal · assertion abort · exit outside 0/frozen oracle · wrong sanitizer/access/top-frame · apply/build/repro failure · regression failure</text>
+
+          <text class="d-role blue" x="50" y="268">semantic plane · only after mechanical eligibility</text>
+          <rect class="d-card ink" x="50" y="290" width="260" height="78" rx="6"/>
+          <text class="d-title xs" x="180" y="315" text-anchor="middle">Canonical blinded packet</text>
+          <text class="d-sub xs" x="180" y="337" text-anchor="middle">oracle + raw replay + RCA + PatchPlan</text>
+          <text class="d-sub xs" x="180" y="355" text-anchor="middle">diff + regression · no arm/model/cost</text>
+          <path class="d-edge" d="M310,329 H386" marker-end="url(#e-a)"/>
+
+          <rect class="d-card amber" x="388" y="254" width="230" height="54" rx="6"/><text class="d-title xs" x="503" y="277" text-anchor="middle">Claude Opus 4.8</text><text class="d-sub xs" x="503" y="296" text-anchor="middle">pinned external judge</text>
+          <rect class="d-card blue" x="388" y="322" width="230" height="54" rx="6"/><text class="d-title xs" x="503" y="345" text-anchor="middle">GPT-5.5 snapshot</text><text class="d-sub xs" x="503" y="364" text-anchor="middle">not the worker model</text>
+          <rect class="d-card green" x="388" y="390" width="230" height="54" rx="6"/><text class="d-title xs" x="503" y="413" text-anchor="middle">Gemini 3.5 Flash</text><text class="d-sub xs" x="503" y="432" text-anchor="middle">stable third provider</text>
+          <path class="d-edge" d="M618,281 H688 V349"/>
+          <path class="d-edge" d="M618,349 H688"/>
+          <path class="d-edge" d="M618,417 H688 V349"/>
+          <rect class="d-card fill-blue" x="690" y="316" width="180" height="66" rx="6"/><text class="d-title xs" x="780" y="341" text-anchor="middle">3 valid · 2-of-3</text><text class="d-sub xs" x="780" y="361" text-anchor="middle">errors retry, then unavailable</text>
+          <path class="d-edge" d="M870,349 H918" marker-end="url(#e-a)"/>
+          <rect class="d-card fill-green" x="920" y="316" width="110" height="66" rx="6"/><text class="d-title xs" x="975" y="341" text-anchor="middle">semantic</text><text class="d-sub xs" x="975" y="361" text-anchor="middle">PASS / FAIL</text>
+
+          <rect class="d-card ink" x="264" y="488" width="552" height="58" rx="6"/>
+          <text class="d-title sm" x="540" y="512" text-anchor="middle">success = mechanical ∧ safety ∧ semantic ∧ regression</text>
+          <text class="d-sub" x="540" y="532" text-anchor="middle">immutable bundle: prompts · responses · raw evidence · retries · hashes · timestamps</text>
+        </svg>
+      </div>
+      <figcaption><b>Fig 9.</b> One Opus judge is independent but insufficient. Three heterogeneous pinned families reduce correlated error. The gold patch is excluded from acceptance so valid alternative fixes can pass; it may be used only for development calibration or sensitivity analysis.</figcaption>
+    </figure>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Judge rule</th><th>Frozen behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Blinding</td><td>remove cell, topology, worker model, treatment, cost, and identifying paths; use an opaque evaluation ID</td></tr>
+        <tr><td>Rubric</td><td>causal defect, correct repair layer, broad-suppression risk, evidence consistency, regression risk, final boolean</td></tr>
+        <tr><td>Errors</td><td>fixed retries against the same stored prompt and model; exhausted errors fail closed</td></tr>
+        <tr><td>Provenance</td><td>persist each prompt, schema, response, model snapshot, effort, tokens, cost, retry, timestamp, and hash</td></tr>
+        <tr><td>Cost accounting</td><td>judge cost reported separately; it never changes N1/B4 treatment cost endpoints</td></tr>
+        <tr><td>Evaluator completeness</td><td>reported separately from cost completeness; an incomplete assignment remains an ITT failure and blocks the superiority decision</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 10 — RELEASE GATE ============ -->
+  <section id="release">
+    <div class="kick" data-reveal><b>10</b> / Experiment release gate</div>
+    <h2 data-reveal>Current status: not ready for confirmatory N1 vs B4</h2>
+    <p class="intro" data-reveal>Evaluator architecture is implemented on this branch (six-replay mechanical, provenance-proven fresh base, containerized host regression, zero-human three-seat panel). Launch is still blocked on a replacement untouched cohort, operational freeze, recovery-path validation, and live smoke.</p>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Requirement</th><th>Current evidence</th><th>Blocking action</th></tr></thead>
+      <tbody>
+        <tr><td>Zero-human semantic gate</td><td>panel is <code>claude-opus-4-8</code> + <code>gpt-5.5-2026-04-23</code> + <code>gemini/gemini-3.5-flash</code>; human audit queue removed</td><td>prove live three-seat structured responses; fund Anthropic seat</td></tr>
+        <tr><td>Per-role model routing</td><td><code>worker.model_overrides</code> wired through config/bootstrap/OpenHands</td><td>none in code; freeze role map in study manifest</td></tr>
+        <tr><td>Prompt-treatment agreement</td><td><code>b4-adaptive-manager-v2</code> and <code>b3-direct-compact-v1</code> match the host-owned initial route and LLM-only recovery design</td><td>validate real DB-backed recovery provenance before launch</td></tr>
+        <tr><td>Exact independent replay</td><td>PoC×3 + patch×3; exact crash oracle (class/access/frame); SEGV <code>unknown</code> + module-offset frames</td><td>live replay on all cohort images</td></tr>
+        <tr><td>Fresh-base provenance</td><td><code>fresh_base</code> derived from six distinct container IDs; each replay stores <code>replay_id</code>, digest, base commit</td><td>none in code path</td></tr>
+        <tr><td>Replay target identity</td><td>each replay stores instance + base commit; both trios must independently resolve to the requested instance and same base</td><td>none in code path</td></tr>
+        <tr><td>Host regression</td><td>19 candidate project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound</td><td>regenerate and freeze plans for the replacement cohort</td></tr>
+        <tr><td>Grounded judges</td><td>blinded packet includes frozen oracle + raw host replay + host regression</td><td>pilot bundle proves no arm/model fields leak</td></tr>
+        <tr><td>Complete provenance</td><td>immutable evaluation bundle: replays, regression, semantic panel, hashes</td><td>pilot bundle inspection</td></tr>
+        <tr><td>Strict pairing</td><td>confirmatory runner rejects missing/duplicate/unequal arms</td><td>none in code path</td></tr>
+        <tr><td>Evaluator completeness</td><td>separate rate and exact incomplete assignment keys; incomplete bundles fail closed and block the superiority decision</td><td>pilot must produce a complete bundle for every assignment</td></tr>
+        <tr><td>Cohort isolation</td><td>adapter rejects tasks present in declared development enrollment locks</td><td>replace the current 19-task candidate roster, which overlaps development runs</td></tr>
+        <tr><td>Cost integrity</td><td>missing usage is unavailable, never imputed zero for ITT success</td><td>none in code path</td></tr>
+        <tr><td>Confirmatory freeze</td><td><code>b4-boss-manager-worker/confirmatory</code> assets exist; the preregistration is draft and unfrozen</td><td>freeze only after cohort replacement, real DB recovery-path validation, and pilot</td></tr>
+        <tr><td>Verification</td><td>use the final task report for current focused/full tests, type checks, architecture boundary, and diff checks</td><td>development end-to-end pilot still required</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 11 — REFERENCE ============ -->
   <section id="ref" style="border-bottom:none;">
-    <div class="kick" data-reveal><b>08</b> &nbsp;/&nbsp; Reference</div>
+    <div class="kick" data-reveal><b>11</b> / Reference</div>
     <h2 data-reveal>Event families &amp; glossary</h2>
     <div class="gtab" data-reveal>
-      <h4>Event stream <span class="when">38 frozen types · EVENT_TYPE_REGISTRY · two aggregates</span></h4>
+      <h4>Event stream <span class="when">42 frozen types · EVENT_TYPE_REGISTRY · two aggregates</span></h4>
       <dl>
         <div class="row"><span class="id">lifecycle</span><span><code>AgentCreated</code>, <code>TaskAssigned</code>, <code>ChildSpawned</code>, <code>ChildCompleted</code>, <code>ChildFailed</code>, <code>WorkCompleted</code>, <code>WorkFailed</code> — the agent tree.</span></div>
         <div class="row"><span class="id">resilience</span><span><code>RetryScheduled</code>, <code>FailureDigestRecorded</code>, <code>RedecompositionTriggered</code> — the self-healing loop.</span></div>
@@ -716,14 +808,14 @@
     </div>
     <div class="lex" data-reveal style="margin-top:24px;">
       <dl>
-        <div class="term"><dt>AgentSession</dt><dd>Primary event-sourced aggregate; 35 of 38 events replay into it. Never mutated directly.</dd></div>
+        <div class="term"><dt>AgentSession</dt><dd>Primary event-sourced aggregate; 39 of 42 events replay into it. Never mutated directly.</dd></div>
         <div class="term"><dt>SharedStore</dt><dd>Second aggregate (artifacts + decisions), sharing the events table via a <code>uuid5</code> id.</dd></div>
         <div class="term"><dt>failure_digest</dt><dd>Deterministic, LLM-free summary of a failed attempt, injected into the retry prompt.</dd></div>
-        <div class="term"><dt>Re-decomposition</dt><dd>A parent re-plans (bounded by <code>max_redecompositions</code>) informed by <code>failure_history</code>.</dd></div>
+        <div class="term"><dt>Re-decomposition</dt><dd>A Manager re-plans (bounded by <code>max_redecompositions</code>) from <code>failure_history</code>; non-Manager parents fail upward.</dd></div>
       </dl>
       <dl>
-        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier running registry-matched tasks host-side with zero LLM turns.</dd></div>
-        <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — captured by the host, unforgeable.</dd></div>
+        <div class="term"><dt>Procedural dispatch</dt><dd>Flag-gated tier whose Host attempts use zero LLM turns; initial failure permits one agentic repair and, if it completes, one Host recheck.</dd></div>
+        <div class="term"><dt>ProcedureEvidence</dt><dd><code>argv · exit_code · output_sha256 · excerpt</code> per command — Host-computed and not directly agent-authored; still in-run evidence from the shared worker container.</dd></div>
         <div class="term"><dt>DooD</dt><dd>Docker-out-of-Docker: the orchestrator launches each CVE container on the host's Docker daemon.</dd></div>
         <div class="term"><dt>Crash signature</dt><dd><code>(sanitizer_class, access_type, top_frame)</code> — matched against the CVE oracle to decide a verdict.</dd></div>
       </dl>

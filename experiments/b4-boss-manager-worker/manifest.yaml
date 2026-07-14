@@ -1,15 +1,11 @@
 study_id: b4-boss-manager-worker
 created_at: 2026-06-09T00:00:00+00:00
 hypothesis: >
-  Main experiment #4 — our full 3-level tree with mixed models: BOSS
-  (claude-sonnet-4-6) -> BEF managers (claude-sonnet-4-6) -> workers
-  (gpt-5.4-mini via OpenHands). topology.max_depth=3 forms the real
-  Boss > Manager > Worker tree: each Builder/Exploiter/Fixer manager
-  decomposes into its full specialized role roster (PoC-Researcher,
-  Forward-Instrumentator, Root-Cause-Analyst, Patch-Validator, …). Tests that
-  the system decomposes into self-contained tasks and modularizes correctly
-  without degrading outcomes, and that manager-level prompt-cache reuse makes
-  B4 the cheapest arm: normalized cost N1,N2 > B3 > B4.
+  B4 uses fixed Builder, Exploiter, Fixer, and Reporter controllers. Each
+  controller starts with a compact outcome-producing route. After a failed
+  evidence gate, its Manager selects phase-specific specialists and the host
+  validates the selection. Context is bounded and consumer-scoped; host
+  procedures own exploit and patch validation.
 dataset: dataset.yaml
 replicates: 1
 cells:

@@ -192,16 +192,15 @@ class ClaudeCodeWorker:
         transcript_path: Path,
         container_session: ContainerSessionContext,
     ) -> WorkerResult:
-        """Container path: ``claude`` runs inside the secb-tools container.
+        """Run ``claude`` inside the plugin-provided container.
 
         ``mcp_servers`` from ``workspace.extras`` is rewritten for in-container
         execution: the JSON config and stdio command are remapped so the MCP
-        server runs inside the same container as the agent (no host-side
-        ``secb-exec`` hop). The Dockerfile bakes Python + the ``mcp`` package
-        and the server module under ``/opt/arise-mcp/``.
+        server runs inside the same container as the agent without a host-side
+        helper hop.
         """
         # Inside the container, ``claude`` is on PATH (installed by the
-        # secb-tools Dockerfile); no host shutil.which probe.
+        # container image); no host shutil.which probe.
         in_container_claude = "claude"
         await prepare_claude_container_user(container_session)
         mcp_config_container_path = self._maybe_write_in_container_mcp_config(
@@ -268,13 +267,9 @@ class ClaudeCodeWorker:
     ) -> Path | None:
         """Write an ``mcp_servers.json`` rewritten for in-container execution.
 
-        The host-side stdio config (built by the security plugin) tells the MCP
-        server to call ``secb-exec`` to docker-exec into the container. When
-        ``claude`` itself runs *inside* that container, the helper script is
-        unreachable; instead we rewrite each server's ``command``/``args`` to
-        invoke the in-container Python + the bundled MCP module, and drop
-        ``ARISE_SECBENCH_HELPER_SCRIPT`` so the server takes the
-        in-container code path (``bash -lc`` direct).
+        The host-side stdio config can provide an ``in_container`` override.
+        When ``claude`` runs inside the container, that metadata supplies the
+        executable, arguments, and environment rewrite.
 
         The JSON file lands in the bind-mounted run directory so it is visible
         from both host and container; the returned path is the *container*
@@ -310,14 +305,14 @@ class ClaudeCodeWorker:
         if self._output_format == "stream-json":
             argv.append("--verbose")
         # The Claude CLI's default permission mode requires interactive
-        # approval for every tool call. In a batch / sandboxed experiment run
+        # approval for every tool call. In an unattended sandboxed run
         # there is no operator to click "approve", so the agent burns turns on
         # denials and hits max-turns without making progress. Tool policy is
         # still enforced via ``--allowedTools`` / ``--disallowedTools`` and
         # the scratch ``settings.json`` we write — bypass only short-circuits
         # the per-call interactive gate. ``bypassPermissions`` is preferred over
         # ``--dangerously-skip-permissions`` because the latter refuses to run
-        # as root, and the secb-tools container runs as root by default.
+        # as root, and plugin containers may run as root by default.
         argv.extend(["--permission-mode", "bypassPermissions"])
         if self._model:
             argv.extend(["--model", self._model])
@@ -381,7 +376,7 @@ class ClaudeCodeWorker:
         """In-container env: narrow allowlist + remapped ``CLAUDE_CONFIG_DIR``.
 
         We deliberately do NOT forward ``PATH``/``HOME``/``USER``/``LANG`` etc.
-        from the host — the secb-tools container has its own coherent base
+        from the host — the container has its own coherent base
         environment and forwarding host values would override container PATH
         and break ``claude`` resolution.
         """
@@ -401,7 +396,7 @@ class ClaudeCodeWorker:
         container image may inherit root from its base, so we drop privileges
         only for this exec by passing ``--user 1000:1000`` after preparing a
         matching passwd/group/home entry in the running container. The
-        bind-mounted source and testcase trees are assumed to be left
+        bind-mounted source and artifact trees are assumed to be left
         world-readable/writable by the domain plugin's workspace preparation.
         """
         return build_docker_exec_argv(

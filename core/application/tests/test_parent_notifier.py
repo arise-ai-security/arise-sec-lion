@@ -10,6 +10,7 @@ from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentS
 from core.domain.events.events import (
     ChildCompleted,
     ChildFailed,
+    PhaseGateRecorded,
     RedecompositionTriggered,
     WorkCompleted,
     WorkFailed,
@@ -26,13 +27,61 @@ def _config() -> dict:
     }
 
 
+def _phase_manager() -> AgentSession:
+    parent = AgentSession.create(agent_id=uuid4(), role=AgentRole.MANAGER, config=_config())
+    parent.assign_task("[Review] verify")
+    return parent
+
+
+def test_phase_gate_not_recorded_while_redecomposing() -> None:
+    # Given: a phase manager that is mid-flight (ANALYZING, e.g. re-decomposing),
+    # not a terminal outcome
+    parent = _phase_manager()
+    child = AgentSession.create(
+        agent_id=uuid4(), role=AgentRole.WORKER, config=_config(), parent_id=parent.agent_id
+    )
+    assert parent.status == AgentStatus.ANALYZING
+
+    # When: the terminal-gate recorder runs
+    ParentNotificationService._record_terminal_phase_gate(parent, child)
+
+    # Then: no phase gate is recorded for a non-terminal parent
+    assert not any(isinstance(e, PhaseGateRecorded) for e in parent.events)
+
+
+def test_phase_gate_recorded_once_on_terminal_completion() -> None:
+    # Given: a phase manager that terminally completes
+    parent = _phase_manager()
+    spawned = parent.apply_subtasks_and_spawn_children(
+        subtasks=[Subtask(description="w", config=_config())],
+        child_role=AgentRole.WORKER.value,
+        briefing=parent.build_briefing_for_child(),
+    )
+    child_id, _ = spawned[0]
+    parent.handle_child_update(child_id, "done")
+    assert parent.status == AgentStatus.COMPLETED
+    child = AgentSession.create(
+        agent_id=child_id, role=AgentRole.WORKER, config=_config(), parent_id=parent.agent_id
+    )
+
+    # When: the terminal-gate recorder runs
+    ParentNotificationService._record_terminal_phase_gate(parent, child)
+
+    # Then: exactly one passing gate is recorded for the review phase
+    gates = [e for e in parent.events if isinstance(e, PhaseGateRecorded)]
+    assert len(gates) == 1
+    assert gates[0].phase == "Review"
+    assert gates[0].passed is True
+
+
 async def _create_waiting_parent(
     repository: AgentRepository,
+    role: AgentRole = AgentRole.MANAGER,
 ) -> tuple[AgentSession, AgentSession]:
     """Persist a parent in WAITING plus an infeasible child in FAILED."""
     parent = AgentSession.create(
         agent_id=uuid4(),
-        role=AgentRole.BOSS,
+        role=role,
         config=_config(),
     )
     parent.assign_task("Main task")
@@ -59,11 +108,12 @@ async def _create_waiting_parent(
 async def _waiting_parent_with_children(
     repository: AgentRepository,
     count: int = 2,
+    role: AgentRole = AgentRole.MANAGER,
 ) -> tuple[AgentSession, list]:
-    """Persist a BOSS in WAITING with ``count`` spawned (not-yet-reported) children."""
+    """Persist a parent in WAITING with spawned children."""
     parent = AgentSession.create(
         agent_id=uuid4(),
-        role=AgentRole.BOSS,
+        role=role,
         config=_config(),
     )
     parent.assign_task("Main task")
@@ -156,7 +206,7 @@ async def test_infeasible_child_propagates_failure_after_limit_exhausted() -> No
 @pytest.mark.asyncio
 async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
     """A non-infeasible child failure records its task and digest on the parent."""
-    # Given: a BOSS in WAITING with two children, one of which hard-fails with a digest
+    # Given: a Manager in WAITING with two children, one hard-failing with a digest
     event_store = InMemoryEventStore()
     repository = AgentRepository(event_store=event_store, max_retries=3)
     notifier = ParentNotificationService(repository=repository, max_redecompositions=2)
@@ -165,7 +215,7 @@ async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
     child = _make_failed_child(
         child_ids[0],
         parent.agent_id,
-        task="build the PoC",
+        task="build the artifact",
         reason="Segfault in parser",
         digest="FAILURE: Segfault in parser\nLAST TOOL CALLS:\n[bash/tool_result] make",
     )
@@ -177,7 +227,7 @@ async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
     # Then: the parent's ChildFailureRecord retains task, reason, and digest
     reloaded_parent = await repository.load(parent.agent_id)
     record = reloaded_parent.failed_children[child_ids[0]]
-    assert record.child_task == "build the PoC"
+    assert record.child_task == "build the artifact"
     assert record.reason == "Segfault in parser"
     assert record.digest is not None and "LAST TOOL CALLS" in record.digest
     # And: the second child has not reported, so the parent stays WAITING
@@ -188,7 +238,7 @@ async def test_child_failure_passes_task_and_digest_to_parent_record() -> None:
 async def test_all_children_failed_with_budget_redecomposes_not_fails() -> None:
     """When every child fails and redecomposition budget remains, the parent
     re-decomposes (ANALYZING) rather than failing."""
-    # Given: a BOSS in WAITING with two children and a redecomposition budget
+    # Given: a Manager in WAITING with two children and a redecomposition budget
     event_store = InMemoryEventStore()
     repository = AgentRepository(event_store=event_store, max_retries=3)
     notifier = ParentNotificationService(repository=repository, max_redecompositions=2)
@@ -213,10 +263,9 @@ async def test_all_children_failed_with_budget_redecomposes_not_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_infeasible_fast_path_redecomposes_without_child_failure_record() -> None:
-    """The Infeasible: fast-path re-decomposes directly and never records a
-    ChildFailed — unchanged by the enriched failure-record path."""
-    # Given: a BOSS in WAITING with a single infeasible child and budget left
+async def test_infeasible_fast_path_preserves_failure_for_redecomposition() -> None:
+    """An infeasible child is retained as Manager recovery evidence."""
+    # Given: a Manager in WAITING with a single infeasible child and budget left
     event_store = InMemoryEventStore()
     repository = AgentRepository(event_store=event_store, max_retries=3)
     notifier = ParentNotificationService(repository=repository, max_redecompositions=1)
@@ -226,12 +275,31 @@ async def test_infeasible_fast_path_redecomposes_without_child_failure_record() 
     # When: the infeasible failure is notified upward
     await notifier.notify_if_failed(child)
 
-    # Then: the parent re-decomposes without emitting any ChildFailed
+    # Then: the parent re-decomposes with the failed task and reason in history
     reloaded_parent = await repository.load(parent.agent_id)
     assert reloaded_parent.status == AgentStatus.ANALYZING
+    assert len(reloaded_parent.failure_history) == 1
+    assert reloaded_parent.failure_history[0].child_task == child.task_description
+    assert reloaded_parent.failure_history[0].reason.startswith("Infeasible:")
     parent_events = event_store.events_for(parent.agent_id)
     assert any(isinstance(e, RedecompositionTriggered) for e in parent_events)
-    assert not any(isinstance(e, ChildFailed) for e in parent_events)
+    assert any(isinstance(e, ChildFailed) for e in parent_events)
+
+
+@pytest.mark.asyncio
+async def test_non_manager_parent_never_redecomposes_after_child_failure() -> None:
+    event_store = InMemoryEventStore()
+    repository = AgentRepository(event_store=event_store, max_retries=3)
+    notifier = ParentNotificationService(repository=repository, max_redecompositions=2)
+    parent, child = await _create_waiting_parent(repository, role=AgentRole.BOSS)
+
+    await notifier.notify_if_failed(child)
+
+    reloaded_parent = await repository.load(parent.agent_id)
+    assert reloaded_parent.status == AgentStatus.FAILED
+    assert reloaded_parent.redecomposition_count == 0
+    parent_events = event_store.events_for(parent.agent_id)
+    assert not any(isinstance(event, RedecompositionTriggered) for event in parent_events)
 
 
 def _emit_work_completed(worker: AgentSession, result: str) -> None:

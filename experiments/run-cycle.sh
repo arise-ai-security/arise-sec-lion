@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run all four cost-family cells concurrently on the smoke instances for one
+# Run the N1, B3, and B4 studies concurrently on the smoke instances for one
 # optimization cycle. Usage: experiments/run-cycle.sh <cycle-label>
 # Logs land in temp/<cycle-label>/<study>.log. Each study uses --parallel 2.
 set -euo pipefail
@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 label="${1:?usage: run-cycle.sh <cycle-label>}"
 mkdir -p "temp/${label}"
 
-studies=(n1-openhands-linear n2-openhands-subagents b3-boss-bef-direct b4-boss-manager-worker)
+studies=(n1-openhands-linear b3-direct-compact b4-boss-manager-worker)
 pids=()
 for study in "${studies[@]}"; do
   "experiments/${study}/smoke.sh" > "temp/${label}/${study}.log" 2>&1 &

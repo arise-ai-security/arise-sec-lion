@@ -4,8 +4,10 @@ Handles notifying parent agents when children complete or fail.
 Extracted from ExecutionService to follow Single Responsibility Principle.
 """
 
+import re
+
 from core.application.types import ProgressCallback
-from core.domain.aggregates.agent_session import AgentSession, AgentStatus
+from core.domain.aggregates.agent_session import AgentRole, AgentSession, AgentStatus
 
 from .agent_repository import AgentNotFoundError, AgentRepository
 
@@ -65,7 +67,9 @@ class ParentNotificationService:
                 child_id=child.agent_id,
                 result=child.result or "",
                 report=report,
+                max_redecompositions=self._redecomposition_limit(parent),
             )
+            self._record_terminal_phase_gate(parent, child)
 
             await self._repository.persist_events(
                 parent,
@@ -101,12 +105,11 @@ class ParentNotificationService:
           completion path so the grandparent sees the completion chain.
         - ANALYZING (re-decompose in flight) or other: no-op.
 
-        If child failure is infeasible (DecisionInfeasible), triggers parent
-        re-decomposition instead of propagating failure. Otherwise the failure,
-        its task, and its digest are recorded on the parent. When ALL children
-        have failed and redecomposition budget remains, the parent re-decomposes
-        informed by those records (ends ANALYZING); once the budget is exhausted
-        it fails and the failure bubbles up to BOSS.
+        If child failure is infeasible (DecisionInfeasible), a Manager may
+        re-decompose instead of propagating failure. Otherwise the failure, its
+        task, and its digest are recorded on the parent. When every required
+        Manager child has failed and budget remains, that Manager re-decomposes
+        informed by those records; non-Manager parents fail upward.
         """
         if child.status != AgentStatus.FAILED or child.parent_id is None:
             return
@@ -131,14 +134,24 @@ class ParentNotificationService:
             # ANALYZING (re-decompose in flight) or unexpected state.
             return
 
+        redecomposition_limit = self._redecomposition_limit(parent)
+
         # Check if failure is infeasible → trigger re-decomposition
         error = child.error_message or ""
         if error.startswith("Infeasible:"):
-            if parent.redecomposition_count < self._max_redecompositions:
-                parent.trigger_redecomposition(
-                    trigger_child_id=child.agent_id,
+            if parent.redecomposition_count < redecomposition_limit:
+                parent.handle_child_failure(
+                    child_id=child.agent_id,
                     reason=error,
+                    child_task=child.task_description,
+                    digest=child.failure_digest,
+                    max_redecompositions=redecomposition_limit,
                 )
+                if parent.status == AgentStatus.WAITING:
+                    parent.trigger_redecomposition(
+                        trigger_child_id=child.agent_id,
+                        reason=error,
+                    )
                 await self._repository.persist_events(
                     parent, self._progress_callback
                 )
@@ -149,11 +162,11 @@ class ParentNotificationService:
                 child_id=child.agent_id,
                 reason=(
                     "Redecomposition limit reached "
-                    f"({self._max_redecompositions}): {error}"
+                    f"({redecomposition_limit}): {error}"
                 ),
                 child_task=child.task_description,
                 digest=child.failure_digest,
-                max_redecompositions=self._max_redecompositions,
+                max_redecompositions=redecomposition_limit,
             )
             await self._repository.persist_events(
                 parent, self._progress_callback
@@ -169,8 +182,9 @@ class ParentNotificationService:
             reason=error,
             child_task=child.task_description,
             digest=child.failure_digest,
-            max_redecompositions=self._max_redecompositions,
+            max_redecompositions=redecomposition_limit,
         )
+        self._record_terminal_phase_gate(parent, child)
 
         await self._repository.persist_events(
             parent,
@@ -183,3 +197,26 @@ class ParentNotificationService:
             # Partial success: some children succeeded, parent completed with
             # aggregated results. Notify grandparent of completion.
             await self.notify_if_complete(parent)
+
+    def _redecomposition_limit(self, parent: AgentSession) -> int:
+        """Only Managers may semantically re-plan after child failure."""
+        if parent.role == AgentRole.MANAGER:
+            return self._max_redecompositions
+        return 0
+
+    @staticmethod
+    def _record_terminal_phase_gate(parent: AgentSession, child: AgentSession) -> None:
+        # Only a terminal phase outcome gates. A parent that is still WAITING or
+        # re-decomposing (ANALYZING) has no settled verdict yet, so recording a
+        # gate there would emit a spurious passed=False on every replan.
+        if not parent.is_terminal():
+            return
+        match = re.match(r"^\s*\[([^\]]+)\]", parent.task_description)
+        if match is None:
+            return
+        parent.record_phase_gate(
+            phase=match.group(1),
+            passed=parent.status == AgentStatus.COMPLETED,
+            evidence_references=[f"agent:{child.agent_id}"],
+            reason=child.error_message or child.result or "",
+        )

@@ -1,25 +1,18 @@
-# Cell B4 — our system, full 3-level tree: BOSS -> BEF managers -> workers.
-# `topology.max_depth: 3` is what actually forms three levels: at depth-1 a
-# BEF manager has depth_remaining = 3-1 = 2, so the assess_variable.j2:10 soft
-# nudge ("1 level remaining — prefer executing directly") does NOT fire and the
-# manager follows assess.j2's MANDATORY-decompose guidance, spawning its full
-# role roster (Builder -> 3, Exploiter -> 6, Fixer -> 6, Reporter leaf). At
-# depth-2 a worker has depth_remaining = 1, so the nudge + assess.j2 leaf rules
-# keep it executing — the tree stops at three levels (proven by historical B1
-# runs at the default max_depth=3). max_depth=2 was wrong: it gave depth-1
-# managers depth_remaining=1 and the nudge collapsed them to executors (B4==B3).
-# Single-provider (OpenAI): gpt-5.4 boss/managers decompose and coordinate;
-# cheap gpt-5.4-mini OpenHands workers execute. LLM judge OFF.
+# Cell B4 — host-fixed phase controllers with Manager-authored failure recovery.
+# The host creates the initial phase skeleton and compact role route. After a
+# required failure, the phase Manager selects a revised same-phase route and the
+# host validates it before children spawn.
 
 extends: config/config.yaml
 
 overrides:
+  orchestration.treatment_version: b4-adaptive-manager-v2
+  orchestration.max_redecompositions: 1
   orchestration.mode: hierarchical
   orchestration.skip_judge: true
-  # One shared container + OpenHands conversation across the run's workers: each
-  # role inherits prior context (no re-read into a fresh LLM context) and prior
-  # container state (installed tools + non-mounted files persist). Per-role
-  # aggregates/events/cost are preserved (cost recorded as a per-worker delta).
+  orchestration.procedural_dispatch: true
+  # Workers share one container but always open fresh conversations. Scoped packets
+  # carry only current, consumer-relevant source observations between workers.
   orchestration.shared_worker_session: true
   # B-side recon-loop caps (boss/manager tool-calling iterations). The N cells keep
   # the base default (3) — non-binding there since flat mode runs no boss/manager
@@ -28,15 +21,31 @@ overrides:
   orchestration.tool_calling.policies.domains.secbench.pending.max_iterations: 20
   orchestration.tool_calling.policies.domains.secbench.manager.max_iterations: 20
   orchestration.topology.max_depth: 3
-  orchestration.topology.max_children_per_node: 7   # Exploiter/Fixer need 6 leaf workers each
-  orchestration.topology.max_total_agents: 40       # boss + 4 managers + ~16 leaf workers
-  # ~16-20 sequential workers (max_concurrent_workers=1) need a wide wall-clock
-  # cap; the full role roster is the point of this cell.
+  # Nine permits the same flattened compact route in the no-Manager topology.
+  # The security validator independently caps Manager routes to the phase catalog.
+  orchestration.topology.max_children_per_node: 9
+  orchestration.topology.max_total_agents: 30
+  # Escalated routes and verification retries still require a wide wall-clock cap.
   orchestration.max_run_duration_seconds: 14400
+  orchestration.concurrency.max_agent_step_seconds: 3600
   boss.model: gpt-5.4
   manager.model: gpt-5.4
   worker.tool: openhands
   worker.model: gpt-5.4-mini
+  # Coding/execution workers keep the base mini model. Roles that must analyze,
+  # falsify hypotheses, review tradeoffs, or synthesize evidence use Codex.
+  # Procedure-backed validators/appliers are intentionally absent: with
+  # procedural_dispatch=true they execute host-side without an LLM turn.
+  worker.model_overrides:
+    "[PoC-Researcher]": gpt-5.3-codex
+    "[Data-Flow-Analyst]": gpt-5.3-codex
+    "[PoC-Tester]": gpt-5.3-codex
+    "[Forward-Instrumentator]": gpt-5.3-codex
+    "[Root-Cause-Analyst]": gpt-5.3-codex
+    "[Candidate-Reviewer]": gpt-5.3-codex
+    "[Regression-Tester]": gpt-5.3-codex
+    "[Fix-Aggregator]": gpt-5.3-codex
+    "[Reporter]": gpt-5.3-codex
   worker.allowed_tools: [file_editor, glob, grep]
   # OpenHands native tools allowlisted above; terminal/browser omitted —
   # shell reaches the CVE container only via the MCP shell_in_container tool.
@@ -44,23 +53,18 @@ overrides:
   worker.tool_params.openhands.mcp_tool_timeout_seconds: 600
   worker.timeout: 3600
   worker.max_iterations_per_run: 250
-  # Cost knobs (2026-06-10 cycle). One OpenAI prefix-cache shard per run (the
-  # SDK otherwise pins per-conversation: measured 0% first-call hits for 21/26
-  # workers); medium reasoning effort — the SDK default is high and reasoning
-  # was 71% of worker completion tokens; uniform rather than per-branch because
-  # manager task labels are free-form ([PoC-Researcher], [Build-Setup], ...) so
-  # branch-prefix overrides cannot match. Shared code block moves ahead of the
-  # per-phase content (cross-branch cacheable), a freshness index lands near
-  # <task>, directory snapshots stay out of the block, and the workspace
-  # listing whitelists testcase/ (an out-of-tree CMake build alone added ~650
-  # entries ≈ 13K tokens to every prompt turn).
-  # worker.reasoning_effort REVERTED to default 'high' (2026-06-15, H1b) — left
-  # unset to match N1 exactly. 'medium' was a cost knob that handicapped the weak
-  # gpt-5.4-mini worker's reasoning below N1's gpt-5.3-codex (SDK default high).
+  # Cost/context knobs. One OpenAI prefix-cache shard per run (the SDK otherwise
+  # pins per-conversation). Shared code moves ahead of per-phase content, a
+  # freshness index lands near <task>, directory snapshots stay out of the block,
+  # and the workspace listing is bounded. worker.reasoning_effort stays unset so
+  # both routed OpenAI models use the SDK's high default.
   worker.tool_params.openhands.run_scoped_prompt_cache_key: true
   orchestration.shared_code_prefix_first: true
   orchestration.shared_code_index: true
   orchestration.shared_code_skip_dir_listings: true
+  orchestration.shared_code_render_mode: latest_only
+  orchestration.scoped_worker_context: true
+  orchestration.source_context_token_budget: 16000
   # workspace_listing narrowed to [testcase, work] (2026-06-15, H1b): the worker must
   # SEE /work/bin binaries for the Exploiter self-recovery fallback, but listing ALL
   # dirs (None) re-bloats the prompt (~13K tok/turn on out-of-tree CMake builds).

@@ -65,3 +65,8 @@ def compute_invocation_sha256(
     _update_framed(hasher, b"ctx:", ctx_blob)
     _update_framed(hasher, b"task:", task_blob)
     return hasher.hexdigest()
+
+
+def compute_config_sha256(settings: Settings) -> str:
+    """Hash the effective secret-redacted settings independently of task inputs."""
+    return hashlib.sha256(_redacted_settings_blob(settings)).hexdigest()

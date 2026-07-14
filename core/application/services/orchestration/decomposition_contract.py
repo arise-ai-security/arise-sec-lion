@@ -3,15 +3,16 @@
 Core owns the enforcement ACTION over a domain validator's verdict: drop merged
 leaves, inject missing required roles (inheriting sibling worker config), resolve
 the authoritative catalog dependency DAG onto every leaf, and dedup subtasks whose
-role prefix already exists among siblings / across the tree. Classification itself
-is a domain concern (the injected ``DecompositionValidator``); this service is
-domain-agnostic. Spawning stays on the orchestrator — this only validates.
+role prefix is completed or already covered elsewhere in the tree. Classification
+itself is a domain concern (the injected ``DecompositionValidator``). Spawning stays
+on the orchestrator — this only validates.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 
@@ -21,7 +22,16 @@ if TYPE_CHECKING:
     from core.application.services import ChildAgentFactory
     from core.domain.aggregates.agent_session import AgentSession
     from core.domain.values.subtask import Subtask
-    from core.ports.decomposition_validator_port import DecompositionValidator
+    from core.ports.decomposition_policy_port import (
+        InitialDecomposition,
+        InitialDecompositionPolicy,
+        InitialSubtask,
+    )
+    from core.ports.decomposition_validator_port import (
+        DecompositionRoute,
+        DecompositionValidator,
+        ValidatedSubtask,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -35,46 +45,220 @@ class DecompositionContractService:
     def __init__(
         self,
         child_factory: ChildAgentFactory,
+        decomposition_policy: InitialDecompositionPolicy | None = None,
         decomposition_validator: DecompositionValidator | None = None,
+        include_manager_layer: bool = True,
+        max_redecompositions: int = 0,
     ) -> None:
         self._child_factory = child_factory
+        self._decomposition_policy = decomposition_policy
         self._decomposition_validator = decomposition_validator
+        self._include_manager_layer = include_manager_layer
+        self._max_redecompositions = max_redecompositions
+
+    def initial_decomposition(
+        self, agent: AgentSession
+    ) -> tuple[list[Subtask], DecompositionRoute] | None:
+        """Build the host-selected initial plan for this parent, when configured."""
+        policy = self._decomposition_policy
+        if policy is None:
+            return None
+        domain_context = agent.hierarchy_limits.domain_context if agent.hierarchy_limits else None
+        selection = policy.select_initial(
+            parent_task_description=agent.task_description,
+            domain_context=domain_context,
+            is_root=agent.parent_id is None,
+            redecomposition_count=agent.redecomposition_count,
+        )
+        if selection is None:
+            return None
+        if not self._include_manager_layer and agent.parent_id is None:
+            selection = self._flatten_manager_layer(selection, domain_context)
+
+        from core.domain.values.subtask import Subtask
+        from core.ports.decomposition_validator_port import DecompositionRoute
+
+        config = agent.config.model_dump()
+        subtasks = [
+            Subtask(
+                description=suggestion.description,
+                config=dict(config),
+                estimated_complexity=suggestion.estimated_complexity,
+                task_type=suggestion.task_type,
+                depends_on=list(suggestion.depends_on),
+                selection_source="host_policy",
+            )
+            for suggestion in selection.subtasks
+        ]
+        route = DecompositionRoute(
+            policy_version=selection.policy_version,
+            phase=selection.phase,
+            route=selection.route,
+            triggers=selection.triggers,
+            evidence_references=selection.evidence_references,
+            remaining_budget=max(0, self._max_redecompositions - agent.redecomposition_count),
+        )
+        return subtasks, route
+
+    def _flatten_manager_layer(
+        self,
+        selection: InitialDecomposition,
+        domain_context: object | None,
+    ) -> InitialDecomposition:
+        """Flatten one deterministic grouping layer while preserving its dependency DAG."""
+        policy = self._decomposition_policy
+        if policy is None:
+            return selection
+
+        from core.ports.decomposition_policy_port import InitialDecomposition, InitialSubtask
+
+        flattened: list[InitialSubtask] = []
+        entries: list[tuple[int, ...]] = []
+        sinks: list[tuple[int, ...]] = []
+
+        for group in selection.subtasks:
+            nested = policy.select_initial(
+                parent_task_description=group.description,
+                domain_context=domain_context,
+                is_root=False,
+                redecomposition_count=0,
+            )
+            children = nested.subtasks if nested is not None else (
+                replace(group, depends_on=()),
+            )
+            self._validate_dependency_indices(children)
+            offset = len(flattened)
+            depended_on = {dependency for child in children for dependency in child.depends_on}
+            local_entries = tuple(
+                offset + index for index, child in enumerate(children) if not child.depends_on
+            )
+            local_sinks = tuple(
+                offset + index for index in range(len(children)) if index not in depended_on
+            )
+            entries.append(local_entries)
+            sinks.append(local_sinks)
+            flattened.extend(
+                replace(
+                    child,
+                    depends_on=tuple(offset + dependency for dependency in child.depends_on),
+                )
+                for child in children
+            )
+
+        self._validate_dependency_indices(selection.subtasks)
+        dependencies = [set(child.depends_on) for child in flattened]
+        for group_index, group in enumerate(selection.subtasks):
+            for dependency_group in group.depends_on:
+                for entry_index in entries[group_index]:
+                    dependencies[entry_index].update(sinks[dependency_group])
+        flattened = [
+            replace(child, depends_on=tuple(sorted(dependencies[index])))
+            for index, child in enumerate(flattened)
+        ]
+        return InitialDecomposition(
+            subtasks=tuple(flattened),
+            policy_version=selection.policy_version,
+            phase=selection.phase,
+            route=selection.route,
+            triggers=(*selection.triggers, "manager_layer_omitted"),
+            evidence_references=selection.evidence_references,
+        )
+
+    @staticmethod
+    def _validate_dependency_indices(subtasks: tuple[InitialSubtask, ...]) -> None:
+        for index, subtask in enumerate(subtasks):
+            invalid = [dependency for dependency in subtask.depends_on if not 0 <= dependency < index]
+            if invalid:
+                raise ValueError(
+                    f"initial decomposition subtask {index} has invalid dependencies: {invalid}"
+                )
+
+    def role_history(self, agent: AgentSession) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        """Previously selected, failed, and completed role labels for this tree."""
+        factory = self._child_factory
+        previously = tuple(sorted(factory.get_tree_role_prefixes(agent.agent_id)))
+        failed = tuple(sorted(factory.get_failed_role_prefixes(agent.agent_id)))
+        completed = tuple(sorted(factory.get_completed_role_prefixes(agent.agent_id)))
+        # Also derive failed labels from the agent's failure_history (authoritative
+        # for the current re-decomposition attempt even if registry lag exists).
+        history_failed = tuple(
+            label
+            for record in agent.failure_history
+            if (label := self._extract_role_prefix(record.child_task or "")) is not None
+        )
+        if history_failed:
+            failed = tuple(sorted(set(failed) | set(history_failed)))
+        return previously, failed, completed
+
+    def failure_evidence_references(self, agent: AgentSession) -> list[str]:
+        """Stable references for failed children feeding a re-decomposition route."""
+        refs: list[str] = []
+        for record in agent.failure_history:
+            refs.append(f"child_failed:{record.child_id}")
+        return refs
 
     async def enforce_decomposition_contract(
         self,
         agent: AgentSession,
         subtasks: list[Subtask],
         dedup_map: dict[int, int] | None = None,
-    ) -> list[Subtask] | None:
-        """Apply the domain role contract to a (already-deduped) decomposition before spawning.
+    ) -> tuple[list[Subtask] | None, DecompositionRoute | None]:
+        """Apply the domain role contract; return (corrected, optional route provenance).
 
-        ``dedup_map`` (original→post-dedup index) lets authored non-catalog ``depends_on``
-        be remapped through an earlier dedup shift so they are not stale.
-
-        The domain validator classifies contract breaches (missing required roles,
-        merged-role leaves); core owns the action: drop the flagged leaves, inject the
-        suggested ones (inheriting sibling worker config), and re-check hierarchy limits.
-        Returns the corrected subtasks, or None if the repair cannot fit the limits (the
-        agent is failed before any child is spawned). A no-op when no validator is wired
-        or the verdict is clean.
+        Returns ``(None, None)`` if the repair cannot fit hierarchy limits.
         """
         if self._decomposition_validator is None:
-            return subtasks
+            return subtasks, None
         domain_context = agent.hierarchy_limits.domain_context if agent.hierarchy_limits else None
+        previously, failed, completed = self.role_history(agent)
         verdict = self._decomposition_validator.classify(
             parent_task_description=agent.task_description,
             subtask_descriptions=tuple(st.description for st in subtasks),
             domain_context=domain_context,
+            redecomposition_count=agent.redecomposition_count,
+            previously_selected_roles=previously,
+            failed_role_labels=failed,
+            completed_role_labels=completed,
+            redecomposition_limit=self._max_redecompositions,
         )
-        if verdict.ok:
-            # Even a role-complete decomposition can carry missing/wrong depends_on;
-            # enforce the authoritative catalog DAG on the manager's own leaves.
-            return self.resolve_catalog_dependencies(subtasks, dedup_map)
+
+        route_provenance: DecompositionRoute | None = None
+        if verdict.route is not None:
+            from core.ports.decomposition_validator_port import DecompositionRoute
+
+            route_provenance = DecompositionRoute(
+                policy_version=verdict.policy_version,
+                phase=verdict.phase,
+                route=verdict.route,
+                triggers=verdict.triggers,
+                evidence_references=verdict.evidence_references
+                or tuple(self.failure_evidence_references(agent)),
+                remaining_budget=verdict.remaining_budget,
+            )
+
+        route_evidence = (
+            route_provenance.evidence_references if route_provenance is not None else ()
+        )
+        subtasks = self._apply_validated_leaf_contract(
+            agent,
+            subtasks,
+            verdict.validated_subtasks,
+            default_evidence=route_evidence,
+        )
+
+        if verdict.ok and not verdict.removals and not verdict.additions:
+            resolved = self.resolve_catalog_dependencies(subtasks, dedup_map)
+            return resolved, route_provenance
 
         from core.domain.values.subtask import Subtask
 
         removals = set(verdict.removals)
-        base_config = dict(subtasks[0].config) if subtasks else {}
+        base_config = (
+            agent.config.model_dump()
+            if route_provenance is not None or verdict.validated_subtasks
+            else (dict(subtasks[0].config) if subtasks else {})
+        )
+        repair_evidence = route_evidence or tuple(self.failure_evidence_references(agent))
         old_to_new: dict[int, int] = {}
         corrected: list[Subtask] = []
         for old_index, subtask in enumerate(subtasks):
@@ -88,12 +272,11 @@ class DecompositionContractService:
                 config=dict(base_config),
                 estimated_complexity=add.estimated_complexity,
                 task_type=add.task_type,
+                evidence_references=repair_evidence,
+                selection_source="host_repair",
             )
             for add in verdict.additions
         )
-        # Enforce the authoritative catalog DAG on EVERY leaf (authored + injected). Remap
-        # non-catalog authored deps through the full original→corrected shift: compose the
-        # earlier dedup shift (original→deduped) with this removal shift (deduped→corrected).
         if dedup_map is not None:
             index_shift = {
                 orig: old_to_new[deduped]
@@ -114,25 +297,58 @@ class DecompositionContractService:
             len(corrected),
         )
 
-        # Core owns the limit action: a repair that would exceed the caps is a hard
-        # failure surfaced before spawning, not a silently-incomplete decomposition.
         failure = await self.check_limit_violations(agent, corrected)
         if failure:
             agent.fail_with_reason(
                 f"decomposition contract unsatisfiable within hierarchy limits: {failure}"
             )
-            return None
-        return corrected
+            return None, None
+
+        return corrected, route_provenance
+
+    @staticmethod
+    def _apply_validated_leaf_contract(
+        agent: AgentSession,
+        subtasks: list[Subtask],
+        validated_subtasks: tuple[ValidatedSubtask, ...],
+        *,
+        default_evidence: tuple[str, ...],
+    ) -> list[Subtask]:
+        """Bind trusted structure while preserving Manager-authored task content."""
+        canonical = {
+            item.subtask_index: item.canonical_description for item in validated_subtasks
+        }
+        trusted_config = agent.config.model_dump()
+        normalized: list[Subtask] = []
+        for index, subtask in enumerate(subtasks):
+            description = canonical.get(index)
+            if description is None:
+                normalized.append(subtask)
+                continue
+            normalized.append(
+                subtask.model_copy(
+                    update={
+                        "description": description,
+                        "config": dict(trusted_config),
+                        "estimated_complexity": "simple",
+                        "criticality": "required",
+                        "dependency_type": "finish_to_start",
+                        "dependency_failure_policy": "block",
+                        "evidence_references": (
+                            subtask.evidence_references or default_evidence
+                        ),
+                        "execution_mode": "auto",
+                        "procedure_ref": "",
+                        "procedure_params": {},
+                    }
+                )
+            )
+        return normalized
 
     def resolve_catalog_dependencies(
         self, subtasks: list[Subtask], old_to_new: dict[int, int] | None = None
     ) -> list[Subtask]:
-        """Set each leaf's depends_on to its catalog HARD producers (resolved to sibling
-        indices), enforcing the authoritative DAG on every catalog-role leaf — authored OR
-        injected — regardless of what the manager emitted. A leaf whose role has no catalog
-        hard dep keeps its own depends_on, remapped via ``old_to_new`` when removals shifted
-        sibling indices. Only producers that exist in the set are referenced.
-        """
+        """Set each leaf's depends_on to its catalog HARD producers."""
         validator = self._decomposition_validator
         if validator is None:
             return subtasks
@@ -162,16 +378,10 @@ class DecompositionContractService:
         return resolved
 
     async def check_limit_violations(self, agent: AgentSession, subtasks: list) -> str | None:
-        """Check hard limits. Returns failure reason or None.
-
-        Async to compose with the atomic reservation path in
-        ``_spawn_children``; the cap check itself is sync but the
-        cascade keeps the call chain awaitable end-to-end (D.2).
-        """
+        """Check hard limits. Returns failure reason or None."""
         limits = agent.hierarchy_limits
         violations: list[dict[str, Any]] = []
 
-        # Hard limit: children per node
         if (
             limits is not None
             and limits.is_children_limited()
@@ -186,7 +396,6 @@ class DecompositionContractService:
                 }
             )
 
-        # Hard limit: total agents
         max_total = self._child_factory.max_total_agents
         if max_total > 0:
             current_total = self._child_factory.total_created
@@ -220,37 +429,50 @@ class DecompositionContractService:
         agent: AgentSession,
         subtasks: list[Subtask],
     ) -> list[Subtask]:
-        """Remove subtasks whose role names duplicate the agent's own siblings.
+        """Remove subtasks whose roles are already covered by an active attempt.
 
-        When a manager re-decomposes into the exact same roles as its
-        siblings, all those workers are redundant — the siblings already
-        cover them.  This is a common Qwen failure mode.
-
-        Returns:
-            Filtered subtask list (may be empty).
+        Failed roles may be reissued. During re-decomposition, a Manager may also
+        explicitly reissue a completed owner when downstream evidence shows that
+        its artifact needs correction. Unrelated active duplicates remain forbidden.
         """
         if agent.parent_id is None:
             return subtasks  # Boss-level decomposition — no siblings to clash with
 
-        # Collect uncle role names (siblings of the current agent)
-        uncle_roles = self._get_sibling_role_prefixes(agent)
+        uncle_roles = self._child_factory.get_sibling_role_prefixes(
+            agent.agent_id, agent.parent_id
+        )
+        tree_roles = self._child_factory.get_tree_role_prefixes(agent.agent_id)
+        completed = self._child_factory.get_completed_role_prefixes(agent.agent_id)
+        failed = self._child_factory.get_failed_role_prefixes(agent.agent_id)
+        # Failure history is authoritative for this parent's re-decomposition.
+        for record in agent.failure_history:
+            label = self._extract_role_prefix(record.child_task or "")
+            if label:
+                failed = failed | {label}
 
-        # Collect tree-wide role names to catch cross-subtree duplication
-        tree_roles = self._get_tree_role_prefixes(agent)
+        uncle_roles = {role.casefold() for role in uncle_roles}
+        tree_roles = {role.casefold() for role in tree_roles}
+        completed = {role.casefold() for role in completed}
+        failed = {role.casefold() for role in failed}
 
-        if not uncle_roles and not tree_roles:
-            return subtasks  # No siblings or role info — skip check
+        if not uncle_roles and not tree_roles and not completed:
+            return subtasks
 
-        # Also include the agent's own role as off-limits for children
-        own_role = self._extract_role_prefix(agent.task_description or "")
-        forbidden = uncle_roles | tree_roles | ({own_role} if own_role else set())
+        # The registry excludes this grouping agent itself but retains every
+        # other same-labelled agent. Failed leaves may be reissued, and a
+        # re-decomposition may explicitly replace a completed generation.
+        used = uncle_roles | tree_roles
+        reissuable = failed | (completed if agent.redecomposition_count > 0 else set())
+        forbidden = used - reissuable
 
         kept: list[Subtask] = []
         for st in subtasks:
             prefix = self._extract_role_prefix(st.description)
-            if prefix and prefix in forbidden:
+            normalized_prefix = prefix.casefold() if prefix else None
+            if normalized_prefix and normalized_prefix in forbidden:
                 logger.info(
-                    "Agent %s: stripping duplicate subtask [%s] (already covered by sibling/self)",
+                    "Agent %s: stripping duplicate subtask [%s] "
+                    "(already covered by an active agent)",
                     agent.agent_id,
                     prefix,
                 )
@@ -266,19 +488,3 @@ class DecompositionContractService:
             )
 
         return kept
-
-    def _get_sibling_role_prefixes(self, agent: AgentSession) -> set[str]:
-        """Get [Role-Name] prefixes of the agent's siblings (same parent)."""
-        if agent.parent_id is None:
-            return set()
-        registry = getattr(self._child_factory, "_limits_registry", None)
-        if registry is None:
-            return set()
-        return registry.get_sibling_role_prefixes(agent.agent_id, agent.parent_id)
-
-    def _get_tree_role_prefixes(self, agent: AgentSession) -> set[str]:
-        """Get ALL [Role-Name] prefixes used anywhere in the execution tree."""
-        registry = getattr(self._child_factory, "_limits_registry", None)
-        if registry is None:
-            return set()
-        return registry.get_tree_role_prefixes(agent.agent_id)

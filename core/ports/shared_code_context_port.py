@@ -7,8 +7,21 @@ contents as events and rebuilds the byte-stable block from them. Capture is
 driven by real LLM tool calls — the port never decides what to read.
 """
 
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
 from uuid import UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ContextPacket:
+    """Bounded source packet plus reconstructable selection telemetry."""
+
+    source_block: str | None
+    source_index: str | None
+    total_chars: int
+    total_tokens: int
+    entries: tuple[dict[str, object], ...] = ()
+    omitted_entries: tuple[dict[str, object], ...] = ()
 
 
 class SharedCodeContextPort(Protocol):
@@ -19,8 +32,30 @@ class SharedCodeContextPort(Protocol):
     prompt are recoverable from the event store alone.
     """
 
-    async def record_view(self, root_id: UUID, agent_id: UUID, path: str, content: str) -> None:
-        """Record the content a worker's view tool returned (tool RESULT)."""
+    async def record_view(
+        self,
+        root_id: UUID,
+        agent_id: UUID,
+        path: str,
+        content: str,
+        *,
+        capture_type: Literal["full", "range", "truncated"] = "full",
+        requested_start_line: int | None = None,
+        requested_end_line: int | None = None,
+        actual_start_line: int | None = None,
+        actual_end_line: int | None = None,
+        phase: str = "",
+        role: str = "",
+    ) -> None:
+        """Record the content a worker's view tool returned (tool RESULT).
+
+        ``capture_type`` records how much of the file the bytes represent: ``full``
+        only for a verified whole-file read, otherwise ``range``/``truncated`` with
+        the requested and actual 1-indexed line span. A bare view defaults to
+        ``full`` (no range requested returns the whole file); callers that view a
+        slice MUST pass the truthful type and span so the block never presents an
+        excerpt as a complete file. ``phase``/``role`` record the observing context.
+        """
         ...
 
     async def record_edit(self, root_id: UUID, agent_id: UUID, path: str) -> None:
@@ -39,5 +74,30 @@ class SharedCodeContextPort(Protocol):
 
         Rendered into the volatile prompt tail near the task. Returns None when
         indexing is disabled or no source has been observed for the run.
+        """
+        ...
+
+    async def context_packet(
+        self,
+        root_id: UUID,
+        *,
+        target_paths: tuple[str, ...] = (),
+        symbols: tuple[str, ...] = (),
+        failure_digest: str | None = None,
+        hard_predecessor_ids: tuple[UUID, ...] = (),
+        consumed_artifacts: tuple[str, ...] = (),
+        phase: str = "",
+    ) -> ContextPacket:
+        """Build a deterministic latest-revision packet for one consumer.
+
+        The dependency-scope inputs make the packet consumer-specific instead of
+        hierarchy-global. When ANY of ``hard_predecessor_ids`` (agent ids whose
+        observations the consumer depends on), ``consumed_artifacts`` (source-path
+        references the consumer's contract inputs cover), or ``phase`` (the
+        consumer's phase) is supplied, the candidate observations are FILTERED to
+        those produced by a hard predecessor, on a consumed-artifact/target path,
+        matching a target symbol, referenced by ``failure_digest``, or local to the
+        consumer's phase — excluding evidence that belongs to unrelated siblings or
+        phases. With none supplied, the packet stays hierarchy-global (back-compat).
         """
         ...

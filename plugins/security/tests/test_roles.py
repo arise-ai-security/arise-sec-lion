@@ -1,4 +1,4 @@
-"""Catalog invariants for plugins/security/roles.py and its eval/prompt derivations."""
+"""Catalog invariants for plugins/security/roles.py and prompt derivations."""
 
 from plugins.security import roles as R
 from plugins.security.deliverables import (
@@ -44,7 +44,10 @@ def test_decomposition_only_matches_deliverables_hierarchical_only() -> None:
 
 def test_optional_role_deliverables_are_not_hierarchical_only_required() -> None:
     """Optional role outputs may be useful evidence, but they are not mandatory files."""
-    assert R.decomposition_only_deliverables("Fixer") == ("/testcase/root_cause_analysis.txt",)
+    assert R.decomposition_only_deliverables("Fixer") == (
+        "/testcase/root_cause_analysis.txt",
+        "/testcase/patch_plan.json",
+    )
     assert "/testcase/fix_summary.md" not in HIERARCHICAL_ONLY.get("Fixer", ())
 
 
@@ -52,8 +55,8 @@ def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
     """Hard edges only describe required producer artifacts from the old prompt contract."""
     expected = {
         "Build-Setup": (),
-        "Build-Compiler": ("Build-Setup",),
-        "Build-Verifier": ("Build-Compiler",),
+        "Build-Executor": ("Build-Setup",),
+        "Build-Verifier": ("Build-Executor",),
         "PoC-Researcher": (),
         "Data-Flow-Analyst": (),
         "PoC-Tester": (),
@@ -63,8 +66,8 @@ def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
         "Root-Cause-Analyst": (),
         "Candidate-Reviewer": ("Root-Cause-Analyst",),
         "Regression-Tester": (),
-        "Patch-Creator": ("Root-Cause-Analyst",),
-        "Patch-Validator": ("Patch-Creator",),
+        "Patch-Applier": ("Root-Cause-Analyst",),
+        "Patch-Validator": ("Patch-Applier",),
         "Fix-Aggregator": ("Patch-Validator",),
         "Reporter": (),
     }

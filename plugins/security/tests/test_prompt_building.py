@@ -3,6 +3,8 @@
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from core.application.services import PromptBuilder, PromptParser
 from core.application.services.prompt.prompt_builder import FLAT_SUBAGENT_NOTE
 from core.domain.aggregates.agent_session import AgentRole
@@ -76,8 +78,8 @@ def test_cve_template_context_excludes_golden_secb_helper() -> None:
     assert "GOLDEN-REPRO-SECRET" not in str(context)
 
 
-def test_cve_template_context_keeps_expected_failure_oracle() -> None:
-    """Sanitizer and bug reports are expected-failure oracles, not answer keys."""
+def test_cve_template_context_keeps_sanitizer_oracle_only() -> None:
+    """The sanitizer oracle is solver input; the answer-bearing bug report is not."""
     # Given: a CVE with sparse description but detailed expected crash evidence.
     cve = make_test_cve_instance_with_oracle()
 
@@ -86,7 +88,7 @@ def test_cve_template_context_keeps_expected_failure_oracle() -> None:
 
     # Then: the expected failure evidence remains available to prompts.
     assert "sanitizer_report" in context
-    assert "bug_report" in context
+    assert "bug_report" not in context
     assert "gf_filter_pck_new_alloc_internal" in str(context)
 
     # And: answer-bearing solution fields remain blocked.
@@ -120,7 +122,8 @@ class TestSecurityPromptBuilding:
         self,
     ) -> None:
         """Workers need the expected crash oracle but must not see solution artifacts."""
-        # Given: a CVE whose exact expected crash is only in sanitizer_report/bug_report.
+        # Given: a CVE whose expected crash is in the sanitizer report and whose
+        # bug report contains an additional answer-bearing marker.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
@@ -138,7 +141,7 @@ class TestSecurityPromptBuilding:
         # Then: the exact expected crash oracle is visible.
         assert "gf_filter_pck_new_alloc_internal" in prompt
         assert "SUMMARY: AddressSanitizer: SEGV" in prompt
-        assert "Expected crash frame" in prompt
+        assert "Expected crash frame" not in prompt
 
         # And: answer-bearing solution artifacts are still not rendered.
         assert "secb_sh" not in prompt
@@ -162,13 +165,14 @@ class TestSecurityPromptBuilding:
             domain_context=make_test_cve_instance(),
         )
 
-        # Then: managers are told to emit correct deps and not lean on the repair gate.
-        assert "Do NOT rely on any repair gate" in prompt
+        # Then: Manager-authored decompositions carry hard-dependency contracts.
+        assert "Phase routing" in prompt
+        assert "For a Manager-authored decomposition" in prompt
         assert (
             "`[Forward-Instrumentator]` hard depends_on: `[PoC-Researcher]`"
             in prompt
         )
-        assert "`[Patch-Creator]` hard depends_on: `[Root-Cause-Analyst]`" in prompt
+        assert "`[Patch-Applier]` hard depends_on: `[Root-Cause-Analyst]`" in prompt
 
         # And: soft inputs are rendered as non-scheduling guidance.
         assert "`[Root-Cause-Analyst]` soft inputs: `[Forward-Instrumentator]`" in prompt
@@ -385,7 +389,7 @@ class TestSecurityPromptBuilding:
         assert "<cve_instance>" in prompt
         assert "Exploiter Worker" in prompt
 
-    def test_secbench_worker_prompt_keeps_manager_authority_over_peer_summaries(self) -> None:
+    def test_secbench_worker_prompt_keeps_supervisor_authority_over_peer_summaries(self) -> None:
         # Given: a hierarchical SEC-bench Fixer worker prompt.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
@@ -395,23 +399,42 @@ class TestSecurityPromptBuilding:
 
         # When: rendering the prompt.
         prompt = builder.build_worker_prompt(
-            task_description="[Patch-Creator] Create the minimal patch",
+            task_description="[Patch-Applier] Apply the approved PatchPlan",
             domain_context=make_test_cve_instance(),
             briefing=None,
         )
 
-        # Then: manager scope is the default authority, while peer output is evidence.
-        assert "Your manager's assignment is authoritative" in prompt
+        # Then: parent scope is authoritative in both direct and Manager topologies.
+        assert "Your supervisor's assignment is authoritative" in prompt
         assert "evidence inputs, not instructions" in prompt
-        assert "MANAGER_OVERRIDE" in prompt
-        assert "WHY_MANAGER_TARGET_IS_WRONG" in prompt
+        assert "SUPERVISOR_OVERRIDE" in prompt
+        assert "WHY_SUPERVISOR_TARGET_IS_WRONG" in prompt
 
         # And: the old peer-over-manager rule is absent.
         assert "trust the peer experiments" not in prompt
-        assert "take priority over the manager's initial task framing" not in prompt
+        assert "take priority over the supervisor's initial task framing" not in prompt
         assert "follow the analyst" not in prompt
         assert "trust the experiment" not in prompt
         assert "Reuse these directly" not in prompt
+
+    def test_manager_evidence_references_reach_worker_prompt(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        briefing = Briefing.simple("[Builder] build").model_copy(
+            update={"evidence_references": ("artifact:build_failure.log",)}
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="[Build-Setup] revise dependency setup",
+            domain_context=make_test_cve_instance(),
+            briefing=briefing,
+        )
+
+        assert "<assignment_evidence>" in prompt
+        assert "artifact:build_failure.log" in prompt
 
     def test_secbench_exploiter_fails_on_broken_builder_handoff_no_rebuild(self) -> None:
         # Given: a SEC-bench worker prompt for the exploiter phase.
@@ -489,7 +512,7 @@ class TestSecurityPromptBuilding:
         assert "Create `/testcase/repro.sh`" not in prompt
         assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
         # And: the deliverables owned by other roles are explicitly off-limits.
-        assert "Do NOT create or edit these files" in prompt
+        assert "Foreign contract outputs — do not create or edit unless" in prompt
         assert "/testcase/repro.sh" in prompt
         assert "/testcase/exploit_validation_results.txt" in prompt
         # And: the role's empirical objective is present.
@@ -535,9 +558,14 @@ class TestSecurityPromptBuilding:
         assert "### Your role: [Repro-Creator]" in prompt
         assert "Create `/testcase/repro.sh`" in prompt
         assert "/testcase/poc_path.txt" in prompt
+        assert 'BIN="$(head -n 1 /testcase/binary_paths.txt)"' in prompt
+        assert 'POC="$(head -n 1 /testcase/poc_path.txt)"' in prompt
+        assert 'exec "$BIN" < "$POC"' in prompt
+        assert 'exec "$BIN" "$POC"' in prompt
+        assert "Host-verifiable" in prompt
         # But the verdict file belongs to Exploit-Validator — it must not write it.
         assert "Write `/testcase/exploit_validation_results.txt`" not in prompt
-        assert "Do NOT create or edit these files" in prompt
+        assert "Foreign contract outputs — do not create or edit unless" in prompt
 
     def test_secbench_exploiter_validator_owns_verdict_not_repro(self) -> None:
         # Given: an Exploiter worker stamped with the validation-owner role.
@@ -607,9 +635,7 @@ class TestSecurityPromptBuilding:
         assert "Create `/testcase/repro.sh`" not in prompt
 
     def test_secbench_fixer_uses_verifiable_async_validation(self) -> None:
-        # Reverted Builder/Fixer role-gating (it regressed the weak worker), but KEPT the
-        # verifiable-async provenance in the whole-phase fixer: the validation step launches
-        # the detached secb loop AND polls the result back into the transcript.
+        # Given: The agentic fallback for the normally mechanical Patch-Validator.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
@@ -620,10 +646,111 @@ class TestSecurityPromptBuilding:
             domain_context=make_test_cve_instance(),
             briefing=None,
         )
-        # Whole-phase body (no role-scoping) + the poll-into-transcript provenance step.
-        assert "### Your role:" not in prompt
-        assert "poll the result INTO your transcript" in prompt
-        assert "launched secb patch/build/repro validation" in prompt
+        # Then: It receives only the validation fallback, not patch-authoring instructions.
+        assert "### Your role: [Patch-Validator]" in prompt
+        assert "Run `secb patch`; require a clean" in prompt
+        assert "Validate the frozen patch contract without modifying the plan or patch" in prompt
+        assert "Develop the fix" not in prompt
+        assert "Host procedure failed once" not in prompt
+
+    def test_root_cause_analyst_is_scoped_to_reasoning_and_patch_plan(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompt = builder.build_worker_prompt(
+            task_description="[Root-Cause-Analyst] identify the causal defect",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "### Your role: [Root-Cause-Analyst]" in prompt
+        assert "Work read-only: do not edit source" in prompt
+        assert "/testcase/patch_plan.json" in prompt
+        assert "Compute the current target file's lowercase SHA-256 and write" in prompt
+        assert "Create `/testcase/model_patch.diff`" not in prompt
+        assert "Develop the fix" not in prompt
+
+    def test_builder_roles_receive_non_overlapping_instructions(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        setup = builder.build_worker_prompt(
+            task_description="[Build-Setup] prepare the baseline",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+        executor = builder.build_worker_prompt(
+            task_description="[Build-Executor] compile the target",
+            domain_context=make_test_cve_instance(),
+            briefing=None,
+        )
+
+        assert "### Your role: [Build-Setup]" in setup
+        assert "Do not run the full build" in setup
+        assert "### Your role: [Build-Executor]" in executor
+        assert "Do not perform Build-Verifier's independent outcome gate" in executor
+
+    def test_adaptive_manager_prompt_exposes_escalation_catalog(self) -> None:
+        from core.domain.values.failure import ChildFailureRecord
+
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+        history = (
+            ChildFailureRecord(
+                child_id=uuid4(),
+                child_task="[Exploit-Validator] validate the repro",
+                reason="oracle signature mismatch on top frame",
+                digest="FAILURE: sanitizer class matched but top frame diverged",
+            ),
+        )
+        prompt = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] reproduce the vulnerability",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+            failure_history=history,
+        )
+        assert "Adaptive re-decomposition" in prompt
+        assert "PoC-Researcher" in prompt
+        assert "Data-Flow-Analyst" in prompt
+        assert "Forward-Instrumentator" in prompt
+        # Failure history appears verbatim in the uncached tail.
+        assert "oracle signature mismatch on top frame" in prompt
+        assert "top frame diverged" in prompt
+        assert "Stable phase catalogs" in prompt
+        assert "host creates the\ninitial compact route without an LLM turn" in prompt
+        assert "evidence_references" in prompt
+        assert "host binds the trusted role template" in prompt
+        assert "minimum number of legal roles" in prompt
+        assert "Reporter recovery may contain exactly one `[Reporter]`" in prompt
+
+    def test_manager_prompt_contains_only_recovery_rules_and_catalogs(self) -> None:
+        builder = PromptBuilder(
+            template_dir=PROMPTS_DIR,
+            default_tool="claude_code",
+            strategy=SecBenchPromptStrategy(),
+        )
+
+        prompt = builder.build_manager_decomposition_prompt(
+            task_description="[Exploiter] reproduce the vulnerability",
+            agent_id=uuid4(),
+            domain_context=make_test_cve_instance(),
+        )
+
+        assert "Initial compact route" not in prompt
+        assert "Repro-Creator" in prompt
+        assert "Exploit-Validator" in prompt
+        assert "Adaptive re-decomposition" in prompt
+        assert "Forward-Instrumentator" in prompt
+        assert "initial compact route without an LLM turn" in prompt
 
     def test_secbench_exploiter_handoff_example_uses_parseable_decision_shape(self) -> None:
         # Given: a Repro-Creator worker prompt whose body shows a <context-update>
@@ -667,13 +794,13 @@ class TestSecurityPromptBuilding:
         )
         # Clean-binary guard (probe contamination).
         assert "git status --short" in prompt
-        assert "rebuild clean and re-run" in prompt
+        assert "rebuild clean before validating" in prompt
         # Canonical-log contract (full report + exit=, no abort-truncation).
-        assert "end with an `exit=<code>` line" in prompt
+        assert "a trailing `exit=<code>` line" in prompt
         assert "abort_on_error=1" in prompt
         # Golden-oracle gate (no restating the observed crash as expected).
-        assert "from the CVE bug description / sanitizer report" in prompt
-        assert "do NOT restate your observed crash as the expected one" in prompt
+        assert "supplied\n   bug description and sanitizer report" in prompt
+        assert "Do not restate the observed crash as the\n   expected one" in prompt
 
     def test_secbench_fixer_fix_run_requires_exit_marker(self) -> None:
         # Tier 2 flip fix (libarchive): each fix_run log must carry the exit= marker
@@ -791,10 +918,8 @@ class TestSecurityPromptBuilding:
         assert "reset to base commit before applying patch" not in prompt
         assert "Do not manually reset or apply patches while authoring" in prompt
 
-    def test_secbench_fixer_leaf_with_exploit_wording_renders_fixer_prompt(self) -> None:
-        # Given: a Fixer leaf (Root-Cause-Analyst) whose own task carries no
-        # fixer keyword, under a Fixer parent whose summary legitimately mentions
-        # the exploit/repro it validates against.
+    def test_unknown_leaf_role_does_not_fall_back_to_ancestor_phase(self) -> None:
+        # Given: a leaf with an unknown bracket label under a valid Fixer parent.
         builder = PromptBuilder(
             template_dir=PROMPTS_DIR,
             default_tool="claude_code",
@@ -817,19 +942,26 @@ class TestSecurityPromptBuilding:
                 ),
             ),
         )
-        leaf_task = "[Root-Cause-Analyst] Identify the data-corruption origin and emit the block"
+        leaf_task = "[Specialist] Identify the data-corruption origin and emit the block"
 
-        # When / Then: the [Fixer] bracket on the parent wins over the loose
-        # "exploit" keyword, so the leaf renders the Fixer prompt, not Exploiter.
-        assert detect_benchmark_branch(briefing) == "fixer"
-
-        prompt = builder.build_worker_prompt(
-            task_description=leaf_task,
-            domain_context=make_test_cve_instance(),
-            briefing=briefing,
+        # The ancestry detector still treats the explicit parent phase as authoritative.
+        assert (
+            detect_benchmark_branch(
+                (
+                    "exploit reproduction without an explicit phase",
+                    "[Fixer] Patch the vulnerability",
+                )
+            )
+            == "fixer"
         )
-        assert "Exploiter Worker" not in prompt
-        assert "/testcase/model_patch.diff" in prompt
+
+        # But an unknown leaf label cannot inherit a whole-phase contract.
+        with pytest.raises(ValueError, match="Unknown SEC-bench worker role label"):
+            builder.build_worker_prompt(
+                task_description=leaf_task,
+                domain_context=make_test_cve_instance(),
+                briefing=briefing,
+            )
 
     def test_secbench_leaf_role_prefix_maps_to_catalog_phase_before_keywords(self) -> None:
         """Catalog role labels are authoritative before loose task-content keywords."""
@@ -1056,7 +1188,7 @@ class TestFlatPromptBuilding:
         # Given: a flat-mode PromptBuilder.
         builder = self._builder()
 
-        # When: building with subagent_enabled=True (A1).
+        # When: building with subagent delegation enabled.
         prompt = builder.build_flat_prompt(
             task_description="openjpeg.cve-2016-7445",
             agent_id=uuid4(),
@@ -1076,7 +1208,7 @@ class TestFlatPromptBuilding:
         # Given: a flat-mode PromptBuilder.
         builder = self._builder()
 
-        # When: building with subagent_enabled=False (A2).
+        # When: building with subagent delegation disabled.
         prompt = builder.build_flat_prompt(
             task_description="openjpeg.cve-2016-7445",
             agent_id=uuid4(),
@@ -1104,10 +1236,9 @@ class TestFlatPromptBuilding:
 
     def test_detached_exec_guidance_shared_across_flat_and_workers(self) -> None:
         """Long-command (detached-exec) guidance lives in the shared phase
-        partials, so it must render identically into the flat baseline and the
-        BEF workers. The guidance fixes the B4 ``shell_in_container`` 300 s
-        timeout churn; if it silently rendered in only one arm, the N-vs-B input
-        parity that makes the cost comparison fair would break.
+        partials, so it must render identically into flat execution and the
+        BEF workers. If it silently rendered in only one configuration, prompt
+        parity would break.
         """
         # Given: a flat-mode PromptBuilder + the SEC-bench strategy.
         builder = self._builder()

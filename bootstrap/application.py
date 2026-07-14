@@ -97,6 +97,8 @@ class ApplicationConfig:
     capture_recon_reads: bool = False
     share_boss_recon: bool = False
     procedural_dispatch: bool = False
+    treatment_version: str | None = None
+    config_hash: str | None = None
     domain_plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     prompt_builder: PromptBuilder | None = None
@@ -137,6 +139,8 @@ def get_application(
         workspace_listing_dirs=config.workspace_listing_dirs,
         workspace_listing_max_entries=config.workspace_listing_max_entries,
         verification_max_retries=config.verification_max_retries,
+        treatment_version=config.treatment_version,
+        config_hash=config.config_hash,
     )
 
     # Create collaborators (composition root wiring). Prefer the
@@ -213,11 +217,18 @@ def get_application(
         shared_code_port=infrastructure.shared_code_context,
         capture_recon_reads=config.capture_recon_reads,
         share_boss_recon=config.share_boss_recon,
+        decomposition_policy=(
+            config.domain_plugin.get_decomposition_policy()
+            if config.domain_plugin is not None
+            else None
+        ),
         decomposition_validator=(
             config.domain_plugin.get_decomposition_validator()
             if config.domain_plugin is not None
             else None
         ),
+        include_manager_layer=config.topology.include_manager_layer,
+        max_redecompositions=config.max_redecompositions,
         procedure_executor=(
             config.domain_plugin.get_procedure_executor()
             if config.procedural_dispatch and config.domain_plugin is not None

@@ -14,6 +14,15 @@ class ProcedureEvidence(BaseModel):
     excerpt: str = ""
 
 
+class ProcedurePlanApproval(BaseModel):
+    """Host validation provenance for a frozen procedure-owned plan."""
+
+    model_config = {"frozen": True}
+
+    plan_sha256: str
+    evidence_references: tuple[str, ...]
+
+
 class ProcedureResult(BaseModel):
     """Outcome of a deterministic procedure run.
 
@@ -27,3 +36,4 @@ class ProcedureResult(BaseModel):
     summary: str
     digest: str = ""
     evidence: tuple[ProcedureEvidence, ...] = ()
+    plan_approval: ProcedurePlanApproval | None = None

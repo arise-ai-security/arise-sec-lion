@@ -10,10 +10,8 @@ slightly different config shape:
 - OpenHands SDK: a dict matching ``fastmcp.mcp_config.MCPConfig`` — same
   ``{"mcpServers": {...}}`` wrapper as the CLI.
 
-The "engine-agnostic" inner spec (``{"command": ..., "args": [...], "env": {...}}``)
-is produced by ``plugins.security.mcp.security_tools_server.build_stdio_config``
-and threaded through ``WorkspaceSpec.extras["mcp_servers"]`` /
-``task_context["mcp_servers"]``.
+The engine-agnostic inner spec may include an ``in_container`` override. That
+metadata is consumed here and never forwarded to an MCP client.
 """
 
 from __future__ import annotations
@@ -21,13 +19,17 @@ from __future__ import annotations
 from typing import Any
 
 
-IN_CONTAINER_MCP_PYTHON = "/opt/arise-mcp/venv/bin/python"
-IN_CONTAINER_MCP_PYTHONPATH = "/opt/arise-mcp"
-IN_CONTAINER_SECURITY_MCP_ARGS = ["-m", "plugins.security.mcp.security_tools_server"]
+_IN_CONTAINER_KEY = "in_container"
+
+
+def _client_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(spec)
+    cleaned.pop(_IN_CONTAINER_KEY, None)
+    return cleaned
 
 
 def to_cli_config_payload(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    return {"mcpServers": dict(servers)}
+    return {"mcpServers": {name: _client_spec(spec) for name, spec in servers.items()}}
 
 
 def to_sdk_mcp_servers(
@@ -36,13 +38,13 @@ def to_sdk_mcp_servers(
     out: dict[str, dict[str, Any]] = {}
     for name, spec in servers.items():
         entry: dict[str, Any] = {"type": "stdio"}
-        entry.update(spec)
+        entry.update(_client_spec(spec))
         out[name] = entry
     return out
 
 
 def to_openhands_mcp_config(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    return {"mcpServers": dict(servers)}
+    return {"mcpServers": {name: _client_spec(spec) for name, spec in servers.items()}}
 
 
 def to_in_container_mcp_servers(
@@ -53,15 +55,21 @@ def to_in_container_mcp_servers(
     for name, spec in servers.items():
         if not isinstance(spec, dict):
             continue
-        entry = dict(spec)
-        entry["command"] = IN_CONTAINER_MCP_PYTHON
-        entry["args"] = list(IN_CONTAINER_SECURITY_MCP_ARGS)
-        new_env = {
-            k: v
-            for k, v in (entry.get("env") or {}).items()
-            if k != "ARISE_SECBENCH_HELPER_SCRIPT"
-        }
-        new_env.setdefault("PYTHONPATH", IN_CONTAINER_MCP_PYTHONPATH)
+        entry = _client_spec(spec)
+        override = spec.get(_IN_CONTAINER_KEY)
+        if not isinstance(override, dict):
+            rewritten[name] = entry
+            continue
+        if isinstance(override.get("command"), str):
+            entry["command"] = override["command"]
+        if isinstance(override.get("args"), list):
+            entry["args"] = list(override["args"])
+        remove_env = override.get("remove_env", [])
+        removed = set(remove_env) if isinstance(remove_env, list) else set()
+        new_env = {k: v for k, v in (entry.get("env") or {}).items() if k not in removed}
+        override_env = override.get("env")
+        if isinstance(override_env, dict):
+            new_env.update(override_env)
         entry["env"] = new_env
         rewritten[name] = entry
     return rewritten

@@ -1,0 +1,9 @@
+# Cell B3 — B4's compact role route without phase managers.
+# BOSS -> the same five LLM workers and four host procedures that B4 nests
+# under its Builder, Exploiter, Fixer, and Reporter controllers.
+
+extends: experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml
+
+overrides:
+  orchestration.treatment_version: b3-direct-compact-v1
+  orchestration.topology.include_manager_layer: false

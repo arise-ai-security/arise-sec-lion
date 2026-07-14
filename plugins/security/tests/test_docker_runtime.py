@@ -15,8 +15,13 @@ from plugins.security.container_runtime import (
 )
 from plugins.security.cve_instance import CVEInstance
 from plugins.security.docker_runtime import (
+    DockerProcedureSession,
     DockerSecBenchRuntime,
     _FORBIDDEN_TESTCASE_ARTIFACTS,
+)
+from plugins.security.procedures import (
+    CommandTermination,
+    ProcedureInfrastructureError,
 )
 from plugins.security.runtime import docker_cli, image_ensurer, sealer, workspace_mirror
 
@@ -864,3 +869,986 @@ async def test_prepare_workspace_seeds_non_golden_runtime_scripts(
     assert by_kind["patch_script"].container_path == "/testcase/patch.sh"
     assert by_kind["secb_wrapper"].container_path == "/usr/local/bin/secb"
     assert all(a.non_golden and len(a.content_sha256) == 64 for a in sealed.artifacts)
+
+
+async def test_procedure_session_executes_direct_argv_with_safe_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Procedure commands remain argv vectors and retain the image environment."""
+
+    # Given: a completed Docker exec subprocess and a run container session.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    process_argv: tuple[str, ...] = ()
+    process_stdin: bytes | None = None
+
+    class _CompletedProcess:
+        returncode = 7
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            nonlocal process_stdin
+            process_stdin = input
+            return (b"combined output", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("completed procedure must not be killed")
+
+    async def _fake_create(*args: str, **_kwargs: object) -> _CompletedProcess:
+        nonlocal process_argv
+        process_argv = args
+        return _CompletedProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    procedure = DockerProcedureSession(container)
+
+    # When: running arguments that would be shell syntax through a caller environment.
+    outcome = await procedure.run(
+        ("/work/bin/target", "argument with spaces", ";", "$(touch /tmp/pwned)"),
+        timeout=3.5,
+        stdin=b"PoC bytes",
+        env=(
+            ("UBSAN_OPTIONS", "halt_on_error=1"),
+            ("PATH", "/tmp/attacker"),
+            ("BASH_ENV", "/tmp/payload"),
+        ),
+    )
+
+    # Then: Docker launches the exact target argv, without a shell or an inner
+    # timeout process. The Host owns the deadline.
+    target_index = process_argv.index("/work/bin/target")
+    assert process_argv[target_index:] == (
+        "/work/bin/target",
+        "argument with spaces",
+        ";",
+        "$(touch /tmp/pwned)",
+    )
+    assert "/usr/bin/timeout" not in process_argv
+    assert "bash" not in process_argv[target_index:]
+    assert "-lc" not in process_argv
+
+    # And: fixed launch controls cannot be overridden, while sanitizer overrides survive.
+    environment = {
+        process_argv[index + 1]
+        for index, token in enumerate(process_argv)
+        if token == "--env"
+    }
+    assert "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in environment
+    assert "BASH_ENV=/dev/null" in environment
+    assert "ENV=/dev/null" in environment
+    assert "LC_ALL=C" in environment
+    assert "UBSAN_OPTIONS=halt_on_error=1" in environment
+    assert "PATH=/tmp/attacker" not in environment
+    assert "BASH_ENV=/tmp/payload" not in environment
+
+    # And: SRC/WORK/OUT/SANITIZER are not replaced, so Docker inherits them from the image.
+    assert not any(
+        item.startswith(("SRC=", "WORK=", "OUT=", "SANITIZER=")) for item in environment
+    )
+    assert process_stdin == b"PoC bytes"
+    assert outcome.exit_code == 7
+    assert outcome.output == "combined output"
+    assert not outcome.timed_out
+
+
+async def test_procedure_session_writes_real_stdin_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a procedure session whose direct argv is replaced with a local byte echo.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    procedure = DockerProcedureSession(container)
+    monkeypatch.setattr(
+        procedure,
+        "_docker_argv",
+        lambda _argv, *, env: ["/bin/cat"],
+    )
+
+    # When: the Host supplies PoC bytes through stdin.
+    outcome = await procedure.run(
+        ("/work/bin/target",),
+        timeout=1.0,
+        stdin=b"exact PoC bytes\x00\n",
+    )
+
+    # Then: the real subprocess receives and echoes every byte.
+    assert outcome.exit_code == 0
+    assert outcome.output.encode("utf-8") == b"exact PoC bytes\x00\n"
+
+
+async def test_procedure_session_launch_timeout_removes_container_without_waiting_for_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: docker exec launch ignores cancellation after the Host deadline.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    release_launch = asyncio.Event()
+    removed = AsyncMock()
+
+    async def _hung_start(
+        _docker_argv: list[str],
+        *,
+        pipe_stdin: bool,
+    ) -> asyncio.subprocess.Process:
+        assert not pipe_stdin
+        try:
+            await asyncio.get_running_loop().create_future()
+        except asyncio.CancelledError:
+            await release_launch.wait()
+            raise
+
+    remove = AsyncMock(return_value="")
+    procedure = DockerProcedureSession(container, on_removed=removed)
+    monkeypatch.setattr(procedure, "_start", _hung_start)
+    monkeypatch.setattr(docker_cli, "run_checked", remove)
+
+    # When: launch consumes the command's entire Host deadline.
+    outcome = await procedure.run(("/bin/true",), timeout=0.001)
+
+    # Then: the old container is removed before returning a bounded timeout result.
+    remove.assert_awaited_once_with(
+        ["docker", "rm", "-f", "abc123def456"],
+        timeout=60.0,
+    )
+    removed.assert_awaited_once_with()
+    assert outcome.termination is CommandTermination.TIMED_OUT
+    assert not procedure.usable
+
+    release_launch.set()
+    await asyncio.sleep(0)
+
+
+async def test_procedure_session_cancellation_during_hung_launch_removes_container(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a launch coroutine that has started but does not finish when cancelled.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    launch_started = asyncio.Event()
+    release_launch = asyncio.Event()
+    removed = AsyncMock()
+
+    async def _hung_start(
+        _docker_argv: list[str],
+        *,
+        pipe_stdin: bool,
+    ) -> asyncio.subprocess.Process:
+        assert not pipe_stdin
+        launch_started.set()
+        try:
+            await asyncio.get_running_loop().create_future()
+        except asyncio.CancelledError:
+            await release_launch.wait()
+            raise
+
+    remove = AsyncMock(return_value="")
+    procedure = DockerProcedureSession(container, on_removed=removed)
+    monkeypatch.setattr(procedure, "_start", _hung_start)
+    monkeypatch.setattr(docker_cli, "run_checked", remove)
+    task = asyncio.create_task(procedure.run(("/bin/true",), timeout=30.0))
+    await launch_started.wait()
+
+    # When: orchestration cancels the procedure during launch.
+    task.cancel()
+
+    # Then: cancellation propagates only after confirmed old-container removal.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    remove.assert_awaited_once_with(
+        ["docker", "rm", "-f", "abc123def456"],
+        timeout=60.0,
+    )
+    removed.assert_awaited_once_with()
+    assert not procedure.usable
+
+    release_launch.set()
+    await asyncio.sleep(0)
+
+
+async def test_procedure_session_stops_after_marker_split_across_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    restart = AsyncMock(return_value="abc123def456\n")
+    real_wait_for = asyncio.wait_for
+    wait_for_timeouts: list[float | None] = []
+
+    class _ChunkedOutput:
+        def __init__(self) -> None:
+            self._chunks = [
+                b"startup\nAvailable flags for Add",
+                b"ressSanitizer:\n",
+            ]
+
+        async def read(self, _limit: int) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+    class _MarkerProcess:
+        # Exit 124 is target behavior now; only the Host deadline means timeout.
+        returncode: int | None = 124
+        stdout = _ChunkedOutput()
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert restart.await_count == 1
+            return (b"stopped\n", b"")
+
+        async def wait(self) -> int:
+            raise AssertionError("a live marker match must reset before waiting for exit")
+
+        def kill(self) -> None:
+            raise AssertionError("container restart should reap this docker client")
+
+    process = _MarkerProcess()
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _MarkerProcess:
+        return process
+
+    async def _wait_for_spy(awaitable: object, timeout: float | None) -> object:
+        wait_for_timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", _wait_for_spy)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    outcome = await DockerProcedureSession(container).run_until_marker(
+        ("/work/bin/target", "--help"),
+        marker="Available flags for AddressSanitizer:",
+        timeout=0.25,
+        env=(("ASAN_OPTIONS", "help=1"),),
+    )
+
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert outcome.termination is CommandTermination.STOPPED_AFTER_MARKER
+    assert not outcome.timed_out
+    assert outcome.exit_code == 124
+    assert wait_for_timeouts[0] == 0.25
+    assert outcome.output == (
+        "startup\nAvailable flags for AddressSanitizer:\nstopped\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "startup_output",
+    [b"Available flags for AddressSan", b"ordinary startup output\n"],
+)
+async def test_procedure_session_resets_after_completion_without_full_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    startup_output: bytes,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _PartialOutput:
+        def __init__(self) -> None:
+            self._chunks = [startup_output, b""]
+
+        async def read(self, _limit: int) -> bytes:
+            return self._chunks.pop(0)
+
+    class _CompletedProcess:
+        returncode: int | None = None
+        stdout = _PartialOutput()
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert restart.await_count == 1
+            return (b"", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("completed procedure must not be killed")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _CompletedProcess:
+        return _CompletedProcess()
+
+    restart = AsyncMock(return_value="abc123def456\n")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    outcome = await DockerProcedureSession(container).run_until_marker(
+        ("/work/bin/target", "--help"),
+        marker="Available flags for AddressSanitizer:",
+        timeout=10.0,
+    )
+
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert outcome.termination is CommandTermination.COMPLETED
+    assert outcome.output == startup_output.decode()
+
+
+async def test_procedure_session_exit_124_without_full_marker_is_completed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _PartialOutput:
+        def __init__(self) -> None:
+            self._chunks = [b"Available flags for AddressSan", b""]
+
+        async def read(self, _limit: int) -> bytes:
+            return self._chunks.pop(0)
+
+    class _TimedOutProcess:
+        returncode: int | None = None
+        stdout = _PartialOutput()
+
+        async def wait(self) -> int:
+            self.returncode = 124
+            return 124
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert restart.await_count == 1
+            return (b"", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("completed procedure must not be killed")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _TimedOutProcess:
+        return _TimedOutProcess()
+
+    restart = AsyncMock(return_value="abc123def456\n")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    outcome = await DockerProcedureSession(container).run_until_marker(
+        ("/work/bin/target", "--help"),
+        marker="Available flags for AddressSanitizer:",
+        timeout=10.0,
+    )
+
+    restart.assert_awaited_once()
+    assert outcome.exit_code == 124
+    assert outcome.termination is CommandTermination.COMPLETED
+    assert not outcome.timed_out
+    assert outcome.output == "Available flags for AddressSan"
+
+
+async def test_procedure_session_restarts_before_killing_stuck_marker_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    restart = AsyncMock(return_value="abc123def456\n")
+
+    class _MarkerOutput:
+        async def read(self, _limit: int) -> bytes:
+            return b"Available flags for AddressSanitizer:\n"
+
+    class _StuckClient:
+        returncode: int | None = None
+        stdout = _MarkerOutput()
+
+        def __init__(self) -> None:
+            self.communications = 0
+            self.kill_called = False
+            self.communication: asyncio.Future[tuple[bytes, bytes]] | None = None
+
+        def communicate(self) -> asyncio.Future[tuple[bytes, bytes]]:
+            assert restart.await_count == 1
+            self.communications += 1
+            assert self.communication is None
+            self.communication = asyncio.get_running_loop().create_future()
+            return self.communication
+
+        def kill(self) -> None:
+            self.kill_called = True
+            self.returncode = -9
+            assert self.communication is not None
+            self.communication.set_result((b"", b""))
+
+    process = _StuckClient()
+    cleanup_waits = 0
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _StuckClient:
+        return process
+
+    async def _fake_wait_for(awaitable: object, timeout: float) -> object:
+        nonlocal cleanup_waits
+        if timeout > 5.0:
+            return await awaitable  # type: ignore[misc]
+        assert timeout == 5.0
+        cleanup_waits += 1
+        if cleanup_waits == 1:
+            assert isinstance(awaitable, asyncio.Future)
+            awaitable.cancel()
+            raise TimeoutError
+        return await awaitable  # type: ignore[misc]
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", _fake_wait_for)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    outcome = await DockerProcedureSession(container).run_until_marker(
+        ("/work/bin/target", "--help"),
+        marker="Available flags for AddressSanitizer:",
+        timeout=10.0,
+    )
+
+    assert process.kill_called
+    assert process.communications == 1
+    restart.assert_awaited_once()
+    assert outcome.termination is CommandTermination.STOPPED_AFTER_MARKER
+
+
+async def test_procedure_session_marker_restart_failure_is_infrastructure_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    reset_calls: list[list[str]] = []
+    process_starts = 0
+
+    class _MarkerOutput:
+        async def read(self, _limit: int) -> bytes:
+            return b"Available flags for AddressSanitizer:\n"
+
+    class _LiveProcess:
+        returncode: int | None = None
+        stdout = _MarkerOutput()
+        reaped = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert reset_calls == [
+                ["docker", "restart", "--timeout", "0", "abc123def456"],
+                ["docker", "rm", "-f", "abc123def456"],
+            ]
+            self.returncode = -9
+            self.reaped = True
+            return (b"", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("force-removal should make the client exit")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _LiveProcess:
+        nonlocal process_starts
+        process_starts += 1
+        return process
+
+    async def _reset(cmd: list[str], **_kwargs: object) -> str:
+        reset_calls.append(cmd)
+        if cmd[1] == "restart":
+            raise RuntimeError("Docker daemon unavailable")
+        return ""
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", _reset)
+    process = _LiveProcess()
+    procedure = DockerProcedureSession(container)
+
+    with pytest.raises(ProcedureInfrastructureError) as exc_info:
+        await procedure.run_until_marker(
+            ("/work/bin/target", "--help"),
+            marker="Available flags for AddressSanitizer:",
+            timeout=10.0,
+        )
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert process.reaped
+    assert reset_calls == [
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        ["docker", "rm", "-f", "abc123def456"],
+    ]
+
+    with pytest.raises(ProcedureInfrastructureError, match="unavailable after a failed reset"):
+        await procedure.run(("/bin/true",), timeout=1.0)
+    assert process_starts == 1
+
+
+async def test_procedure_session_normal_exit_124_is_not_a_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A target-owned exit 124 is ordinary completion, not Host timeout evidence."""
+
+    # Given: the target itself exits 124 before the Host deadline.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _TimedOutProcess:
+        returncode = 124
+
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            return (b"partial output", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("completed procedure must not be killed")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _TimedOutProcess:
+        return _TimedOutProcess()
+
+    restart = AsyncMock(return_value="abc123def456\n")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    # When: the procedure session observes the process status.
+    outcome = await DockerProcedureSession(container).run(("/bin/sleep", "60"), timeout=1.0)
+
+    # Then: only the Host watchdog can create TIMED_OUT/reset semantics.
+    restart.assert_not_awaited()
+    assert outcome.exit_code == 124
+    assert outcome.output == "partial output"
+    assert outcome.termination is CommandTermination.COMPLETED
+    assert not outcome.timed_out
+
+
+async def test_procedure_session_restarts_container_after_outer_watchdog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact Host deadline classifies timeout and resets the container."""
+
+    # Given: the outer watchdog expires before Docker exec returns.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+
+    class _StuckProcess:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.kill_called = False
+            self.communications = 0
+            self.communication: asyncio.Future[tuple[bytes, bytes]] | None = None
+
+        def communicate(self, input: bytes | None = None) -> asyncio.Future[tuple[bytes, bytes]]:
+            self.communications += 1
+            assert self.communication is None
+            self.communication = asyncio.get_running_loop().create_future()
+            return self.communication
+
+        def kill(self) -> None:
+            self.kill_called = True
+
+    process = _StuckProcess()
+    wait_calls = 0
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _StuckProcess:
+        return process
+
+    async def _fake_wait_for(awaitable: object, timeout: float) -> object:
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            assert timeout == 0.25
+            return await awaitable  # type: ignore[misc]
+        if wait_calls == 2:
+            assert timeout <= 0.25
+            assert isinstance(awaitable, asyncio.Future)
+            awaitable.cancel()
+            raise TimeoutError
+        assert isinstance(awaitable, asyncio.Future)
+        return await awaitable
+
+    async def _restart(*_args: object, **_kwargs: object) -> str:
+        assert process.communication is not None
+        process.returncode = 143
+        process.communication.set_result((b"partial output", b""))
+        return "abc123def456\n"
+
+    restart = AsyncMock(side_effect=_restart)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", _fake_wait_for)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    # When: running a command past the host watchdog.
+    outcome = await DockerProcedureSession(container).run(("/bin/sleep", "60"), timeout=0.25)
+
+    # Then: restart stops the workload and the Docker client is reaped afterward.
+    assert process.communications == 1
+    assert not process.kill_called
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert outcome.exit_code == 124
+    assert outcome.output == "partial output"
+    assert outcome.timed_out
+
+
+async def test_procedure_session_timeout_preserves_real_stream_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation of the watchdog wrapper must not cancel the output reader."""
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    procedure = DockerProcedureSession(container)
+    process: asyncio.subprocess.Process | None = None
+
+    async def _start(
+        _docker_argv: list[str],
+        *,
+        pipe_stdin: bool,
+    ) -> asyncio.subprocess.Process:
+        nonlocal process
+        assert not pipe_stdin
+        process = await asyncio.create_subprocess_exec(
+            "/bin/sh",
+            "-c",
+            "printf 'before deadline\\n'; exec /bin/sleep 60",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        return process
+
+    async def _restart(*_args: object, **_kwargs: object) -> str:
+        assert process is not None
+        process.terminate()
+        return "abc123def456\n"
+
+    monkeypatch.setattr(procedure, "_start", _start)
+    monkeypatch.setattr(docker_cli, "run_checked", AsyncMock(side_effect=_restart))
+
+    outcome = await procedure.run(("/bin/ignored",), timeout=0.25)
+
+    assert outcome.termination is CommandTermination.TIMED_OUT
+    assert outcome.output == "before deadline\n"
+
+
+async def test_procedure_session_marker_after_deadline_does_not_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bytes observed only while reaping cannot satisfy the expired predicate."""
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    restart = AsyncMock(return_value="abc123def456\n")
+
+    class _LateOutput:
+        def __init__(self) -> None:
+            self._reads = 0
+
+        async def read(self, _limit: int) -> bytes:
+            self._reads += 1
+            if self._reads == 1:
+                return b"startup before deadline\n"
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("unreachable")
+
+    class _LateMarkerProcess:
+        returncode: int | None = None
+        stdout = _LateOutput()
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert restart.await_count == 1
+            self.returncode = 143
+            return (b"Available flags for AddressSanitizer:\n", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("container reset should reap this client")
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _LateMarkerProcess:
+        return _LateMarkerProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+
+    outcome = await DockerProcedureSession(container).run_until_marker(
+        ("/work/bin/target", "--help"),
+        marker="Available flags for AddressSanitizer:",
+        timeout=0.001,
+    )
+
+    restart.assert_awaited_once()
+    assert outcome.termination is CommandTermination.TIMED_OUT
+    assert outcome.timed_out
+    assert outcome.output == "startup before deadline\n"
+    assert "Available flags for AddressSanitizer:" not in outcome.output
+
+
+async def test_procedure_session_cancellation_resets_and_reaps_before_propagating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    first_communication_started = asyncio.Event()
+    communication_finished: asyncio.Future[tuple[bytes, bytes]] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    class _CancellableProcess:
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.communications = 0
+            self.reaped = False
+
+        async def communicate(
+            self, input: bytes | None = None
+        ) -> tuple[bytes, bytes]:
+            self.communications += 1
+            assert self.communications == 1
+            first_communication_started.set()
+            result = await communication_finished
+            self.returncode = 143
+            self.reaped = True
+            return result
+
+        def kill(self) -> None:
+            raise AssertionError("container reset should reap this client")
+
+    process = _CancellableProcess()
+
+    async def _restart(*_args: object, **_kwargs: object) -> str:
+        communication_finished.set_result((b"", b""))
+        return "abc123def456\n"
+
+    restart = AsyncMock(side_effect=_restart)
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _CancellableProcess:
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", restart)
+    procedure = DockerProcedureSession(container)
+
+    task = asyncio.create_task(procedure.run(("/bin/sleep", "60"), timeout=30.0))
+    await first_communication_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    restart.assert_awaited_once_with(
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        timeout=60.0,
+    )
+    assert process.communications == 1
+    assert process.reaped
+
+
+async def test_unreapable_client_is_removed_before_session_invalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: reset succeeds but its docker exec client ignores kill and two reap waits.
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    events: list[str] = []
+    communication: asyncio.Future[tuple[bytes, bytes]] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    class _MarkerOutput:
+        async def read(self, _limit: int) -> bytes:
+            return b"Available flags for AddressSanitizer:\n"
+
+    class _UnreapableProcess:
+        returncode: int | None = None
+        stdout = _MarkerOutput()
+
+        def communicate(self) -> asyncio.Future[tuple[bytes, bytes]]:
+            return communication
+
+        def kill(self) -> None:
+            events.append("kill-client")
+
+        async def wait(self) -> int:
+            events.append("wait-client")
+            self.returncode = -9
+            return -9
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _UnreapableProcess:
+        return _UnreapableProcess()
+
+    async def _docker_command(cmd: list[str], **_kwargs: object) -> str:
+        events.append("restart" if cmd[1] == "restart" else "remove")
+        return ""
+
+    async def _removed() -> None:
+        events.append("invalidate")
+
+    cleanup_waits = 0
+    real_wait_for = asyncio.wait_for
+
+    async def _wait_for(awaitable: object, timeout: float) -> object:
+        nonlocal cleanup_waits
+        if timeout > 5.0:
+            return await real_wait_for(awaitable, timeout)
+        cleanup_waits += 1
+        if cleanup_waits <= 2:
+            assert isinstance(awaitable, asyncio.Future)
+            awaitable.cancel()
+            raise TimeoutError
+        return await awaitable  # type: ignore[misc]
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(asyncio, "wait_for", _wait_for)
+    monkeypatch.setattr(docker_cli, "run_checked", _docker_command)
+    procedure = DockerProcedureSession(container, on_removed=_removed)
+
+    # When: marker success triggers reset but the local client cannot be reaped.
+    with pytest.raises(ProcedureInfrastructureError, match="container was removed"):
+        await procedure.run_until_marker(
+            ("/work/bin/target", "--help"),
+            marker="Available flags for AddressSanitizer:",
+            timeout=10.0,
+        )
+
+    # Then: force-removal and client settlement precede cache invalidation.
+    assert events == [
+        "restart",
+        "kill-client",
+        "remove",
+        "kill-client",
+        "wait-client",
+        "invalidate",
+    ]
+    assert communication.cancelled()
+    assert not procedure.usable
+
+
+async def test_procedure_session_oserror_during_reset_poisons_and_reaps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _make_workspace(tmp_path, uuid4())
+    container = SecBenchContainerSession(
+        workspace=workspace,
+        container_id="abc123def456",
+        container_name="secbench-worker-demo",
+        image=workspace.image,
+    )
+    reset_calls: list[list[str]] = []
+    removed = AsyncMock()
+
+    class _MarkerOutput:
+        async def read(self, _limit: int) -> bytes:
+            return b"Available flags for AddressSanitizer:\n"
+
+    class _LiveProcess:
+        returncode: int | None = None
+        stdout = _MarkerOutput()
+        reaped = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            self.returncode = 143
+            self.reaped = True
+            return (b"", b"")
+
+        def kill(self) -> None:
+            raise AssertionError("failed reset cleanup should reap this client")
+
+    process = _LiveProcess()
+
+    async def _fake_create(*_args: str, **_kwargs: object) -> _LiveProcess:
+        return process
+
+    async def _reset(cmd: list[str], **_kwargs: object) -> str:
+        reset_calls.append(cmd)
+        raise OSError("subprocess launch failed")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(docker_cli, "run_checked", _reset)
+    procedure = DockerProcedureSession(container, on_removed=removed)
+
+    with pytest.raises(ProcedureInfrastructureError) as exc_info:
+        await procedure.run_until_marker(
+            ("/work/bin/target", "--help"),
+            marker="Available flags for AddressSanitizer:",
+            timeout=10.0,
+        )
+
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert process.reaped
+    removed.assert_not_awaited()
+    assert not procedure.usable
+    assert reset_calls == [
+        ["docker", "restart", "--timeout", "0", "abc123def456"],
+        ["docker", "rm", "-f", "abc123def456"],
+    ]
+    with pytest.raises(ProcedureInfrastructureError, match="unavailable after a failed reset"):
+        await procedure.run(("/bin/true",), timeout=1.0)

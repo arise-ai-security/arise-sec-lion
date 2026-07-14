@@ -17,6 +17,13 @@ class TopologyConfig(BaseModel):
     max_depth: int
     max_children_per_node: int
     max_total_agents: int
+    include_manager_layer: bool = Field(
+        default=True,
+        description=(
+            "Keep deterministic grouping nodes as Managers. False flattens one fixed "
+            "grouping layer while preserving its child dependency DAG."
+        ),
+    )
 
     def is_depth_limited(self) -> bool:
         return self.max_depth > 0
@@ -79,9 +86,14 @@ class OrchestrationConfig(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    treatment_version: str | None = Field(
+        default=None,
+        description="Opaque run-variant identifier persisted on RunStarted for provenance.",
+    )
+
     mode: Literal["hierarchical", "flat"] = Field(
         default="hierarchical",
-        description="Top-level execution shape: hierarchical (BOSS->managers->workers) or flat.",
+        description="Top-level execution shape: hierarchical recursive tree or flat worker.",
     )
     max_retries: int = Field(ge=0, le=10)
     poll_interval: float = Field(ge=0.01)
@@ -125,7 +137,7 @@ class OrchestrationConfig(BaseModel):
             "Place the shared code block BEFORE the per-phase domain content in "
             "worker prompts, so the run-global block sits in the byte region all "
             "branches share and cross-branch prefix-cache hits become possible. "
-            "Default keeps the legacy order (per-phase CVE display and mindset "
+            "Default keeps the legacy order (per-phase domain display and mindset "
             "first), which forks the cache per branch."
         ),
     )
@@ -156,11 +168,29 @@ class OrchestrationConfig(BaseModel):
             "busts the prefix cache from that point for later-spawned workers."
         ),
     )
+    scoped_worker_context: bool = Field(
+        default=False,
+        description="Assemble consumer-scoped latest-revision packets instead of a run-global block.",
+    )
+    source_context_token_budget: int = Field(
+        default=16_000,
+        gt=0,
+        description="Maximum source tokens in one scoped worker context packet.",
+    )
+    metadata_context_token_budget: int = Field(
+        default=4_000,
+        gt=0,
+        description=(
+            "Maximum tokens for a scoped packet's metadata/evidence index segment "
+            "(the provided-files index and its omission log). Overflow entries are "
+            "recorded as a single metadata_budget omission instead of overflowing."
+        ),
+    )
     workspace_listing_dirs: list[str] | None = Field(
         default=None,
         description=(
             "Whitelist of top-level workspace directories to include in the "
-            "<workspace> file listing of worker prompts (e.g. ['testcase']). "
+            "<workspace> file listing of worker prompts (e.g. ['artifacts']). "
             "None keeps the legacy behavior: list everything except src/. "
             "Build trees (work/*-build, CMakeFiles) made the legacy listing "
             "balloon to ~50KB per prompt turn."

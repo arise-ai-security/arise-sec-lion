@@ -1,7 +1,7 @@
 """SEC-bench prompt strategy implementation."""
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from core.application.services import PromptContext
 from plugins.security.cve_instance import CVEInstance
@@ -18,6 +18,8 @@ from plugins.security.deliverables import (
     VALIDATION_REQUIRED,
 )
 from plugins.security.roles import (
+    ADAPTIVE_SPECIALISTS,
+    COMPACT_ROLES,
     PHASE_ROLES,
     Role,
     deliverables_owned_by_others,
@@ -28,7 +30,6 @@ from plugins.security.security_tool import get_tools_for_phase
 
 if TYPE_CHECKING:
     from core.application.services import TemplateChain
-    from core.domain.values.node_message import Briefing
 
 
 _CVE_DISPLAY_FIELDS = (
@@ -42,7 +43,6 @@ _CVE_DISPLAY_FIELDS = (
     "work_dir",
     "bug_description",
     "sanitizer_report",
-    "bug_report",
 )
 
 _BRACKET_PREFIX_RE = re.compile(r"^\s*\[([^\]]+)\]")
@@ -56,6 +56,34 @@ _ROLE_TO_BRANCH = {
     role.name.lower(): _PHASE_TO_BRANCH[role.phase.lower()]
     for roles in PHASE_ROLES.values()
     for role in roles
+}
+
+_ROLE_TEMPLATE_BY_NAME: Final[dict[str, str]] = {
+    "Build-Setup": "domains/secbench/worker/roles/builder/build_setup.j2",
+    "Build-Executor": "domains/secbench/worker/roles/builder/build_executor.j2",
+    "Build-Verifier": "domains/secbench/worker/roles/builder/build_verifier.j2",
+    "PoC-Researcher": "domains/secbench/worker/roles/exploiter/poc_researcher.j2",
+    "Data-Flow-Analyst": "domains/secbench/worker/roles/exploiter/data_flow_analyst.j2",
+    "PoC-Tester": "domains/secbench/worker/roles/exploiter/poc_tester.j2",
+    "Forward-Instrumentator": (
+        "domains/secbench/worker/roles/exploiter/forward_instrumentator.j2"
+    ),
+    "Repro-Creator": "domains/secbench/worker/roles/exploiter/repro_creator.j2",
+    "Exploit-Validator": "domains/secbench/worker/roles/exploiter/exploit_validator.j2",
+    "Root-Cause-Analyst": "domains/secbench/worker/roles/fixer/root_cause_analyst.j2",
+    "Candidate-Reviewer": "domains/secbench/worker/roles/fixer/candidate_reviewer.j2",
+    "Regression-Tester": "domains/secbench/worker/roles/fixer/regression_tester.j2",
+    "Patch-Applier": "domains/secbench/worker/roles/fixer/patch_applier.j2",
+    "Patch-Validator": "domains/secbench/worker/roles/fixer/patch_validator.j2",
+    "Fix-Aggregator": "domains/secbench/worker/roles/fixer/fix_aggregator.j2",
+    "Reporter": "domains/secbench/worker/roles/reporter/reporter.j2",
+}
+
+_PHASE_TEMPLATE_BY_BRANCH: Final[dict[str, str]] = {
+    "builder": "domains/secbench/worker/builder.j2",
+    "exploiter": "domains/secbench/worker/exploiter.j2",
+    "fixer": "domains/secbench/worker/fixer.j2",
+    "reporter": "domains/secbench/worker/reporter.j2",
 }
 
 
@@ -73,26 +101,19 @@ def _branch_from_brackets(text: str) -> str | None:
     return _PHASE_TO_BRANCH.get(label) or _ROLE_TO_BRANCH.get(label)
 
 
-def detect_benchmark_branch(briefing: "Briefing | None") -> str | None:
-    """Detect which SEC-bench branch an agent belongs to.
-
-    Ancestry is root-first, so iterate in reverse (direct parent first)
-    to prefer the most specific ancestor over generic BOSS-level tasks.
-    """
-    if briefing is None:
-        return None
-
-    # Authoritative first: the nearest ancestor stamped with an explicit
+def detect_benchmark_branch(task_descriptions: tuple[str, ...]) -> str | None:
+    """Classify nearest-first ancestor task descriptions into a SEC-bench branch."""
+    # Authoritative first: the nearest task stamped with an explicit
     # [Phase] bracket. A Fixer subtask legitimately references the exploit/repro
     # it validates against, so the loose keyword pass below (exploiter before
     # fixer) would otherwise misroute a Fixer leaf to the Exploiter prompt.
-    for ancestor in reversed(briefing.ancestry):
-        bracket = _branch_from_brackets(ancestor.task_summary)
+    for task_description in task_descriptions:
+        bracket = _branch_from_brackets(task_description)
         if bracket is not None:
             return bracket
 
-    for ancestor in reversed(briefing.ancestry):
-        task_lower = ancestor.task_summary.lower()
+    for task_description in task_descriptions:
+        task_lower = task_description.lower()
         if any(kw in task_lower for kw in ("builder", "environment", "setup", "docker pull")):
             return "builder"
         if any(kw in task_lower for kw in ("exploiter", "poc", "exploit", "proof of concept")):
@@ -130,13 +151,18 @@ def role_from_task(task_description: str) -> Role | None:
 
     A leaf worker carries its own role label, so the role is read from the task
     description directly. Phase brackets (``[Exploiter]``) and out-of-catalog
-    labels resolve to None — the worker template then renders the whole-phase
-    body instead of a role-scoped one.
+    labels resolve to None. Worker rendering distinguishes those cases and
+    rejects unknown bracket labels instead of granting a whole-phase contract.
     """
     match = _BRACKET_PREFIX_RE.match(task_description)
     if match is None:
         return None
     return role_by_name_ci(match.group(1).strip())
+
+
+def _leading_bracket_label(task_description: str) -> str | None:
+    match = _BRACKET_PREFIX_RE.match(task_description)
+    return match.group(1).strip() if match is not None else None
 
 
 def _as_cve_instance(domain_context: object | None) -> CVEInstance | None:
@@ -250,12 +276,28 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = _with_contract_context(cve_instance.to_template_context())
-        branch = _detect_branch_from_task(context.task_description)
-        if branch is None:
-            branch = detect_benchmark_branch(context.briefing)
+        # Render every phase catalog in the stable prefix. The current phase and
+        # failure history live after the cache breakpoint, so neither may select
+        # content here without destroying cross-branch/retry prefix reuse.
+        cve_ctx["phase_catalogs"] = tuple(
+            {
+                "phase": phase,
+                "compact_roles": tuple(
+                    role
+                    for name in COMPACT_ROLES.get(phase, ())
+                    if (role := role_by_name_ci(name)) is not None
+                ),
+                "adaptive_specialists": tuple(
+                    role
+                    for name in ADAPTIVE_SPECIALISTS.get(phase, ())
+                    if (role := role_by_name_ci(name)) is not None
+                ),
+            }
+            for phase in PHASE_ROLES
+        )
 
         chain = _with_cve_display(
-            chain, cve_instance, phase=branch, include_decomposition=True
+            chain, cve_instance, include_decomposition=True
         ).render("domains/secbench/manager.j2", **cve_ctx)
         # Boss recon block (the files the boss already read), injected into the
         # cached stable prefix. It is fixed once the boss has decomposed, so it
@@ -273,9 +315,17 @@ class SecBenchPromptStrategy:
             return None
 
         cve_ctx = _with_contract_context(cve_instance.to_template_context())
+        label = _leading_bracket_label(context.task_description)
+        worker_role = role_from_task(context.task_description)
+        if label is not None and worker_role is None and label.lower() not in _PHASE_TO_BRANCH:
+            raise ValueError(
+                f"Unknown SEC-bench worker role label [{label}]. Use a canonical phase "
+                "label or one of the catalog roles."
+            )
+
         branch = _detect_branch_from_task(context.task_description)
         if branch is None:
-            branch = detect_benchmark_branch(context.briefing)
+            branch = detect_benchmark_branch(context.ancestor_task_descriptions)
 
         # A CVE worker with no detectable branch has no phase contract: the
         # shared phase partial (deliverables + verdict gate) is keyed on the
@@ -297,14 +347,13 @@ class SecBenchPromptStrategy:
         # the role layer the manager created is not erased at the worker tier. A
         # phase-level task ([Exploiter]) resolves to no role and keeps the full
         # whole-phase runbook.
-        worker_role = role_from_task(context.task_description)
         cve_ctx["worker_role"] = worker_role
         cve_ctx["foreign_deliverables"] = (
             deliverables_owned_by_others(worker_role) if worker_role is not None else ()
         )
 
         # Gate the shared-code prompt guidance on the feature actually producing
-        # a block. N cells (no provider, flag off) and a run's first worker
+        # a block. Runs with no provider/flag and a run's first worker
         # (nothing observed yet) get the ORIGINAL BEF prompt with no
         # <provided_source_files> mention; only workers that actually receive
         # provided files see the "already in context / don't re-view" guidance.
@@ -329,32 +378,20 @@ class SecBenchPromptStrategy:
         if not self._shared_code_first:
             chain = chain.text_if(bool(context.shared_code_block), context.shared_code_block)
 
-        chain = (
-            chain.render_if(
-                branch == "builder",
-                "domains/secbench/worker/builder.j2",
+        if worker_role is not None:
+            chain = chain.render(
+                "domains/secbench/worker/role_contract.j2",
+                **cve_ctx,
+            ).render(
+                _ROLE_TEMPLATE_BY_NAME[worker_role.name],
+                **cve_ctx,
+            )
+        else:
+            chain = chain.render(
+                _PHASE_TEMPLATE_BY_BRANCH[branch],
                 include_validation_gate=True,
                 **cve_ctx,
             )
-            .render_if(
-                branch == "exploiter",
-                "domains/secbench/worker/exploiter.j2",
-                include_validation_gate=True,
-                **cve_ctx,
-            )
-            .render_if(
-                branch == "fixer",
-                "domains/secbench/worker/fixer.j2",
-                include_validation_gate=True,
-                **cve_ctx,
-            )
-            .render_if(
-                branch == "reporter",
-                "domains/secbench/worker/reporter.j2",
-                include_validation_gate=True,
-                **cve_ctx,
-            )
-        )
         if self._enabled_tools:
             tools = get_tools_for_phase(branch, self._enabled_tools)
             if tools:

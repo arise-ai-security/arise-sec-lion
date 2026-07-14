@@ -1,13 +1,10 @@
-"""Port for validating a parent's proposed child decomposition against a role contract.
+"""Port for Manager-authored decomposition validation.
 
-A domain plugin declares a *role contract*: which roles a phase must spawn and how. An
-LLM manager decomposes free-form, so it can omit a required role or merge several roles
-into one leaf. This port lets the domain CLASSIFY such violations; the core orchestrator
-OWNS the enforcement ACTION (inject the missing leaves, drop/split the merged ones, or
-fail before spawning when hierarchy limits make repair impossible).
+``DecompositionValidator`` classifies decompositions against a domain role contract;
+core owns the repair action.
 
-Core stays domain-ignorant: it passes child task descriptions (strings) plus the opaque
-``domain_context`` and applies the returned additions/removals mechanically.
+Core stays domain-ignorant: it passes child task descriptions plus opaque
+``domain_context`` and applies additions/removals mechanically.
 """
 
 from __future__ import annotations
@@ -29,9 +26,17 @@ class SuggestedSubtask:
 class DecompositionViolation:
     """One classified contract breach (for the failure reason / observability)."""
 
-    kind: str  # "missing_required_role" | "merged_leaf" | "unsatisfiable_dependency"
+    kind: str  # "missing_required_role" | "merged_leaf" | "unsatisfiable_dependency" | ...
     detail: str
     subtask_index: int = -1  # offending child index, or -1 when not leaf-specific
+
+
+@dataclass(frozen=True)
+class ValidatedSubtask:
+    """Canonical description for one accepted, atomic catalog leaf."""
+
+    subtask_index: int
+    canonical_description: str
 
 
 @dataclass(frozen=True)
@@ -40,12 +45,35 @@ class DecompositionVerdict:
 
     ``additions`` are leaves to inject; ``removals`` are indices of existing leaves to
     drop (merged/invalid). Core applies removals then additions and re-checks limits.
+
+    When the domain attaches route provenance (``route`` is set), core records a
+    ``PhaseRouteSelected`` event from the final corrected role list.
     """
 
     ok: bool
     violations: tuple[DecompositionViolation, ...] = ()
     additions: tuple[SuggestedSubtask, ...] = ()
     removals: tuple[int, ...] = ()
+    # Adaptive re-decomposition provenance (None → no PhaseRouteSelected from verdict).
+    route: Literal["compact", "expanded", "escalated"] | None = None
+    triggers: tuple[str, ...] = ()
+    policy_version: str = ""
+    phase: str = ""
+    remaining_budget: int = 0
+    evidence_references: tuple[str, ...] = ()
+    validated_subtasks: tuple[ValidatedSubtask, ...] = ()
+
+
+@dataclass(frozen=True)
+class DecompositionRoute:
+    """Provenance for a domain-validated decomposition route."""
+
+    policy_version: str
+    phase: str
+    route: Literal["compact", "expanded", "escalated"]
+    triggers: tuple[str, ...] = ()
+    evidence_references: tuple[str, ...] = ()
+    remaining_budget: int = 0
 
 
 class DecompositionValidator(Protocol):
@@ -57,6 +85,11 @@ class DecompositionValidator(Protocol):
         parent_task_description: str,
         subtask_descriptions: tuple[str, ...],
         domain_context: object | None,
+        redecomposition_count: int = 0,
+        previously_selected_roles: tuple[str, ...] = (),
+        failed_role_labels: tuple[str, ...] = (),
+        completed_role_labels: tuple[str, ...] = (),
+        redecomposition_limit: int = 0,
     ) -> DecompositionVerdict: ...
 
     def hard_dependencies(self, role_label: str) -> tuple[str, ...]:

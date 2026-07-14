@@ -119,6 +119,15 @@ class _StubDomainPlugin:
     def get_prompt_strategy(self) -> Any:
         return None
 
+    def get_decomposition_validator(self) -> Any:
+        return None
+
+    def get_decomposition_policy(self) -> Any:
+        return None
+
+    def get_procedure_executor(self) -> Any:
+        return None
+
 
 class _CompletingWorker:
     """``WorkerPort`` stub that returns a completed ``WorkerResult``."""

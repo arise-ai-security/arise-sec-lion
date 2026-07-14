@@ -34,16 +34,16 @@ SDK_ADAPTER_MODULE = "infrastructure.adapters.worker.claude_sdk_adapter"
 def _container_session(tmp_path: Path) -> ContainerSessionContext:
     return ContainerSessionContext(
         container_id="abc123def456",
-        container_name="secbench-worker-demo",
-        image="secb-tools:demo.cve-2024-0001-patch",
+        container_name="plugin-worker-demo",
+        image="plugin-tools:demo.issue-0001",
         workspace_root=tmp_path,
         host_source_dir=tmp_path / "src",
-        host_testcase_dir=tmp_path / "testcase",
+        host_artifact_dir=tmp_path / "artifacts",
         host_work_dir=tmp_path / "src" / "demo",
         container_source_dir="/src",
-        container_testcase_dir="/testcase",
+        container_artifact_dir="/artifacts",
         container_working_directory="/src/demo",
-        helper_script=tmp_path / "secb-exec",
+        helper_script=tmp_path / "container-exec",
     )
 
 
@@ -55,10 +55,10 @@ def _container_session_payload(tmp_path: Path) -> dict[str, str]:
         "image": session.image,
         "workspace_root": str(session.workspace_root),
         "host_source_dir": str(session.host_source_dir),
-        "host_testcase_dir": str(session.host_testcase_dir),
+        "host_artifact_dir": str(session.host_artifact_dir),
         "host_work_dir": str(session.host_work_dir),
         "container_source_dir": session.container_source_dir,
-        "container_testcase_dir": session.container_testcase_dir,
+        "container_artifact_dir": session.container_artifact_dir,
         "container_working_directory": session.container_working_directory,
         "container_work_dir": session.container_work_dir,
         "container_workspace_root": session.container_workspace_root,
@@ -180,7 +180,7 @@ class TestProcessBlock:
         """TextBlock event content hides run-scoped host mirror paths."""
         # Given: a Claude text block containing a host mirror path.
         session = _container_session(tmp_path)
-        host_path = tmp_path / "testcase" / "base_commit_hash"
+        host_path = tmp_path / "artifacts" / "revision"
         block = MockTextBlock(f"Read {host_path}")
 
         # When: the adapter converts the block into an event payload.
@@ -188,7 +188,7 @@ class TestProcessBlock:
             result = ClaudeAgentSDKAdapter._process_block(block, session)
 
         # Then: the emitted content uses the canonical container path.
-        assert result == ("Read /testcase/base_commit_hash", "output")
+        assert result == ("Read /artifacts/revision", "output")
 
     def test_thinking_block_rewrites_host_paths_for_events(
         self,
@@ -214,7 +214,7 @@ class TestProcessBlock:
         """ToolResultBlock event content hides run-scoped host mirror paths."""
         # Given: a tool result containing a host mirror path.
         session = _container_session(tmp_path)
-        host_path = tmp_path / "testcase" / "base_commit_hash"
+        host_path = tmp_path / "artifacts" / "revision"
         block = MockToolResultBlock(f"{host_path}: f659")
 
         # When: the adapter converts the block into an event payload.
@@ -222,7 +222,7 @@ class TestProcessBlock:
             result = ClaudeAgentSDKAdapter._process_block(block, session)
 
         # Then: the emitted content uses the canonical container path.
-        assert result == ("Tool result: /testcase/base_commit_hash: f659", "tool_result")
+        assert result == ("Tool result: /artifacts/revision: f659", "tool_result")
 
     def test_unknown_block_returns_none(self) -> None:
         """Unknown block types are skipped."""
@@ -666,14 +666,20 @@ class TestMCPServersWiring:
 
     def test_extract_mcp_servers_rewrites_for_in_container_execution(self) -> None:
         """Containerized SDK mode launches MCP servers inside the same container."""
-        # Given: a host-side SEC-bench MCP stdio spec.
+        # Given: a host-side MCP stdio spec with an in-container override.
         raw = {
-            "security_tools": {
+            "custom_tools": {
                 "command": "python",
-                "args": ["-m", "plugins.security.mcp.security_tools_server"],
+                "args": ["-m", "host_tools"],
                 "env": {
-                    "ARISE_SECBENCH_HELPER_SCRIPT": "/tmp/secb-exec",
-                    "ARISE_SECBENCH_CONTAINER_ID": "abc123def456",
+                    "HOST_HELPER": "/tmp/exec",
+                    "CONTAINER_ID": "abc123def456",
+                },
+                "in_container": {
+                    "command": "/opt/tools/python",
+                    "args": ["-m", "container_tools"],
+                    "remove_env": ["HOST_HELPER"],
+                    "env": {"PYTHONPATH": "/opt/tools"},
                 },
             }
         }
@@ -686,13 +692,13 @@ class TestMCPServersWiring:
 
         # Then: the SDK-shaped config points at the bundled in-container MCP server.
         assert result is not None
-        server = result["security_tools"]
+        server = result["custom_tools"]
         assert server["type"] == "stdio"
-        assert server["command"] == "/opt/arise-mcp/venv/bin/python"
-        assert server["args"] == ["-m", "plugins.security.mcp.security_tools_server"]
-        assert "ARISE_SECBENCH_HELPER_SCRIPT" not in server["env"]
-        assert server["env"]["ARISE_SECBENCH_CONTAINER_ID"] == "abc123def456"
-        assert server["env"]["PYTHONPATH"] == "/opt/arise-mcp"
+        assert server["command"] == "/opt/tools/python"
+        assert server["args"] == ["-m", "container_tools"]
+        assert "HOST_HELPER" not in server["env"]
+        assert server["env"]["CONTAINER_ID"] == "abc123def456"
+        assert server["env"]["PYTHONPATH"] == "/opt/tools"
 
     def test_build_options_passes_mcp_servers_to_claude_agent_options(self) -> None:
         """``mcp_servers`` keyword reaches ``ClaudeAgentOptions`` constructor."""
@@ -747,7 +753,7 @@ class TestMCPServersWiring:
         assert "mcp_servers" not in captured
 
     def test_build_options_enables_summarized_thinking_by_default(self) -> None:
-        """Default B-cell SDK options request visible Claude thinking blocks."""
+        """Default SDK options request visible Claude thinking blocks."""
         # Given: an adapter and a captured ClaudeAgentOptions stub.
         adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
         captured: dict[str, object] = {}
@@ -856,7 +862,7 @@ class TestMCPServersWiring:
         assert captured["can_use_tool"] is None
         assert captured["cwd"] == str(tmp_path)
 
-        # And: the wrapper runs Claude inside the SEC-bench container cwd.
+        # And: the wrapper runs Claude inside the plugin-provided container cwd.
         content = wrapper.read_text(encoding="utf-8")
         assert "docker exec -i" in content
         assert "--user 1000:1000" in content
@@ -916,10 +922,8 @@ class TestToolUseInputPayload:
     """BUG-EVENT1 regression: tool_use events must include the input payload.
 
     Sibling adapters (`claude_code_worker.py:565-567`, `openhands_adapter.py:692`)
-    append ``\\nInput: {<json>}`` to tool_use content so the cross-cell
-    cheating-attempt detector in `experiments/shared/scripts/run_metrics.py`
-    can recover the Bash command string. Pre-fix, this adapter dropped the
-    payload and made B-cell Bash commands invisible to the detector.
+    append ``\\nInput: {<json>}`` to tool-use content so downstream consumers
+    can recover the Bash command string. Pre-fix, this adapter dropped the payload.
     """
 
     @pytest.mark.asyncio
@@ -961,54 +965,9 @@ class TestToolUseInputPayload:
         assert tool_name == "Bash"
         assert "\nInput: " in content, (
             "tool_use content must include the `\\nInput: ` JSON suffix so the "
-            "cheating-attempt detector can extract the Bash command (BUG-EVENT1)."
+            "Bash command can be recovered from the event (BUG-EVENT1)."
         )
         assert "git log --oneline -3" in content
-
-    @pytest.mark.asyncio
-    async def test_capture_tool_use_payload_parses_back_via_detector(self) -> None:
-        """Emitted content round-trips through the cheating-attempt detector.
-
-        Cross-cutting integration check: the content this adapter emits must be
-        parseable by `cheating_detector._extract_bash_command` and recognised
-        as a cheating signature by `_is_cheating_command`.
-        """
-        # Given: an adapter and captured options kwargs.
-        adapter = ClaudeAgentSDKAdapter(SDKAdapterConfig())
-        captured: dict[str, object] = {}
-
-        def _fake_options(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
-        detector = pytest.importorskip(
-            "experiments.shared.scripts.analysis.text.cheating_detector",
-            reason="cheating detector lives on the analysis/* branches",
-        )
-        _extract_bash_command = detector._extract_bash_command
-        _is_cheating_command = detector._is_cheating_command
-
-        tool_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue()
-        with patch.object(claude_sdk_adapter, "ClaudeAgentOptions", _fake_options):
-            adapter._build_options(
-                working_dir="/work",
-                tool_queue=tool_queue,
-                container_session=None,
-            )
-
-        capture_tool_use = _extract_capture_tool_use_hook(captured)
-
-        # When: a cheating-signature Bash command flows through the hook.
-        hook_input = MockHookInput(
-            tool_name="Bash",
-            tool_input={"command": "git log --oneline -3"},
-        )
-        await capture_tool_use(hook_input, None, MagicMock())
-        content, _, _ = tool_queue.get_nowait()
-
-        # Then: the detector recovers the exact command and counts it as cheating.
-        assert _extract_bash_command(content) == "git log --oneline -3"
-        assert _is_cheating_command("git log --oneline -3") is True
 
     @pytest.mark.asyncio
     async def test_capture_tool_use_rewrites_host_paths_for_events(
@@ -1034,7 +993,7 @@ class TestToolUseInputPayload:
             )
 
         capture_tool_use = _extract_capture_tool_use_hook(captured)
-        host_path = tmp_path / "testcase" / "base_commit_hash"
+        host_path = tmp_path / "artifacts" / "revision"
 
         # When: the hook sees the host path after input translation.
         hook_input = MockHookInput(
@@ -1047,7 +1006,7 @@ class TestToolUseInputPayload:
         content, output_type, tool_name = tool_queue.get_nowait()
         assert output_type == "tool_use"
         assert tool_name == "Read"
-        assert "/testcase/base_commit_hash" in content
+        assert "/artifacts/revision" in content
         assert str(tmp_path) not in content
 
     @pytest.mark.asyncio
@@ -1076,7 +1035,7 @@ class TestToolUseInputPayload:
             {
                 "hook_event_name": "PostToolUse",
                 "tool_name": "Read",
-                "tool_input": {"file_path": "/testcase/base_commit_hash"},
+                "tool_input": {"file_path": "/artifacts/revision"},
                 "tool_response": "ad487",
             },
             None,
@@ -1087,5 +1046,5 @@ class TestToolUseInputPayload:
         content, output_type, tool_name = tool_queue.get_nowait()
         assert output_type == "tool_use"
         assert tool_name == "Read"
-        assert "Reading: /testcase/base_commit_hash" in content
-        assert '"/testcase/base_commit_hash"' in content
+        assert "Reading: /artifacts/revision" in content
+        assert '"/artifacts/revision"' in content

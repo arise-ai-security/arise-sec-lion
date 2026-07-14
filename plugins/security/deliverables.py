@@ -1,10 +1,9 @@
 """Single source of truth for SEC-bench mandatory deliverables / success contract.
 
-This is cybersecurity domain data (experiment definition for the secbench
-plugin), not topology or orchestration logic.
+This is cybersecurity domain data for the SEC-bench plugin, not topology or
+orchestration logic.
 
-Both the prompt templates (injected via SecBenchPromptStrategy) and the
-offline evaluation code in experiments/ consume from here.
+Prompt templates consume these constants through ``SecBenchPromptStrategy``.
 
 Adding, removing, or changing a required artifact should only require an edit
 in this file (plus any accompanying prose updates in the .j2 files and
@@ -29,11 +28,13 @@ ARTIFACT_PATHS: Final[dict[str, str]] = {
     "binary_paths": f"{ARTIFACT_DIRS['testcase']}/binary_paths.txt",
     "poc_path": f"{ARTIFACT_DIRS['testcase']}/poc_path.txt",
     "repro_script": f"{ARTIFACT_DIRS['testcase']}/repro.sh",
+    "exploit_identity": f"{ARTIFACT_DIRS['testcase']}/exploit_input_identity.txt",
     "model_patch": f"{ARTIFACT_DIRS['testcase']}/model_patch.diff",
     "security_report": f"{ARTIFACT_DIRS['testcase']}/security_report.md",
     "exploit_validation": f"{ARTIFACT_DIRS['testcase']}/exploit_validation_results.txt",
     "patch_validation": f"{ARTIFACT_DIRS['testcase']}/patch_validation_results.txt",
     "root_cause_analysis": f"{ARTIFACT_DIRS['testcase']}/root_cause_analysis.txt",
+    "patch_plan": f"{ARTIFACT_DIRS['testcase']}/patch_plan.json",
     "fix_summary": f"{ARTIFACT_DIRS['testcase']}/fix_summary.md",
     "poc_operation_map": f"{ARTIFACT_DIRS['testcase']}/poc_operation_map.txt",
     "forward_instrumentation": f"{ARTIFACT_DIRS['testcase']}/forward_instrumentation.log",
@@ -145,6 +146,7 @@ VALIDATION_REQUIRED: Final[dict[str, tuple[str, ...]]] = {
 HIERARCHICAL_ONLY: Final[dict[str, tuple[str, ...]]] = {
     "Fixer": (
         ARTIFACT_PATHS["root_cause_analysis"],
+        ARTIFACT_PATHS["patch_plan"],
     ),
 }
 

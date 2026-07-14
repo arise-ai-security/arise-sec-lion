@@ -87,6 +87,7 @@ class Briefing(BaseModel):
     # Per-child justification from parent's decomposition (Design Choice 4).
     # Contains keys like "objective", "plan", and domain-specific insights.
     subtask_justification: dict[str, str] = {}
+    evidence_references: tuple[str, ...] = ()
 
     @classmethod
     def simple(cls, parent_task: str, parent_role: str = "boss") -> Self:

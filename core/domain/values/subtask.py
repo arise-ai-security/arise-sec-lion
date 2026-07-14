@@ -27,6 +27,14 @@ class Subtask(BaseModel):
         default="finish_to_start",
         description="Type of dependency relationship",
     )
+    criticality: Literal["required", "optional"] = Field(
+        default="required",
+        description="Whether parent success requires this subtask to succeed",
+    )
+    dependency_failure_policy: Literal["block", "replan", "continue"] = Field(
+        default="block",
+        description="Behavior when a hard predecessor fails",
+    )
 
     # Complexity & verification hints
     estimated_complexity: Literal["simple", "complex", "unknown"] = Field(
@@ -69,18 +77,26 @@ class Subtask(BaseModel):
         default=(),
         description="Keywords or patterns to search for (issue IDs, error strings, etc.)",
     )
+    evidence_references: tuple[str, ...] = Field(
+        default=(),
+        description="Failure or artifact evidence that justifies this task selection",
+    )
+    selection_source: Literal["unspecified", "host_policy", "llm", "host_repair"] = Field(
+        default="unspecified",
+        description="Host-assigned provenance for how this final subtask entered the route",
+    )
 
-    # Deterministic execution tier (procedural dispatch). "auto" lets the
-    # registry match; unknown refs are downgraded to "auto" at spawn (fail open).
+    # Deterministic execution tier metadata. Runtime dispatch is bound by the
+    # trusted Host registry; parent/LLM values are not dispatch authority.
     execution_mode: Literal["auto", "agentic", "procedural"] = Field(
         default="auto",
-        description="Parent's marking: force agentic, force a registered procedure, or auto-match",
+        description="Non-authoritative execution hint retained for event provenance",
     )
     procedure_ref: str = Field(
         default="",
-        description="Registered procedure id when execution_mode == 'procedural'",
+        description="Non-authoritative procedure hint retained for event provenance",
     )
     procedure_params: dict[str, Any] = Field(
         default_factory=dict,
-        description="Optional parameters for the procedure executor",
+        description="Non-authoritative procedure parameters retained for event provenance",
     )

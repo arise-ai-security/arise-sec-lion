@@ -7,7 +7,7 @@ cache, artifact, and success-criteria metrics.
 Two public families:
 
 - :mod:`experiments.shared.evaluation.bef` — hierarchical BEF runs (B3, B4).
-- :mod:`experiments.shared.evaluation.linear` — linear runs (N1, N2).
+- :mod:`experiments.shared.evaluation.linear` — flat runs.
 
 All metric functions are pure over a loaded :class:`RunData`; only
 :func:`load_run` touches the database. See

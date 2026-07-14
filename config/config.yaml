@@ -21,8 +21,8 @@ worker:
   # OpenHands native tools are allowlisted above; terminal/browser are omitted.
 
 # Output-format repairer: second-tier LLM-backed JSON parser. Only invoked
-# when the deterministic raw_decode/_repair_json chain fails. Distinct
-# from the security-domain "Fixer" agent role.
+# when the deterministic raw_decode/_repair_json chain fails. This component
+# repairs output format; it does not execute domain tasks.
 #
 # OPT-IN: disabled by default. The repairer is the only repo-level model
 # default: keep it in YAML, not source code, so removing it fails validation.
@@ -91,39 +91,6 @@ orchestration:
           toolsets:
             recon:
               enabled: false   # BOSS recon deferred — separate concern
-      domains:
-        secbench:
-          boss:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-          pending:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-          manager:
-            max_iterations: 3
-            toolsets:
-              recon:
-                allowed_tools:
-                  - search_codebase
-                  - read_file
-                  - get_file_structure
-                  - get_symbols_overview
-                  - read_symbol
-
 output:
   verbose: true
   log_level: INFO
@@ -143,9 +110,3 @@ cors:
   allowed_headers:
     - "*"
   allow_credentials: true
-
-# SEC-bench container settings
-security:
-  enabled: true  # Uses worker.timeout for secb commands
-  tools: [valgrind, klee]  # KLEE is lazy-installed on first use by security_tools_server
-  tools_image_registry: cheshire0814  # prebuilt secb-tools images auto-pull from here on a local miss

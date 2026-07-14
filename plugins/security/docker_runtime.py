@@ -6,12 +6,13 @@ import asyncio
 import logging
 import os
 import shlex
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .container_runtime import SecBenchContainerSession, SecBenchWorkspace
-from .procedures import CommandOutcome
+from .procedures import CommandOutcome, CommandTermination, ProcedureInfrastructureError
 from .runtime import docker_cli, image_ensurer, sealer, workspace_mirror
 from .runtime.sealer import _FORBIDDEN_TESTCASE_ARTIFACTS  # noqa: F401  re-exported for tests
 
@@ -23,6 +24,14 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+_PROCEDURE_FIXED_ENV = {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "LC_ALL": "C",
+    "BASH_ENV": "/dev/null",
+    "ENV": "/dev/null",
+}
 
 
 class DockerSecBenchRuntime:
@@ -183,7 +192,7 @@ class DockerSecBenchRuntime:
             # Bind the workspace root so worker scratch files (e.g. mcp config,
             # scratch CLAUDE_CONFIG_DIR) written on the host are reachable from
             # inside the container — required when the agent process itself
-            # runs in-container (Cell A flat-mode docker-exec path).
+            # runs through the flat in-container docker-exec path.
             "-v",
             f"{self._host_path(workspace.host_root)}:{workspace.container_workspace_root}",
             "-v",
@@ -287,51 +296,498 @@ class DockerSecBenchRuntime:
         helper.chmod(helper.stat().st_mode | 0o755)
 
 
+class _ProcedureLaunchTimedOut(TimeoutError):
+    """The Host deadline expired before docker exec returned a process handle."""
+
+
 class DockerProcedureSession:
     """ProcedureSession over the run's shared worker container.
 
-    Drives ``docker exec`` synchronously for the deterministic procedure tier.
-    A timeout is a task-level outcome (``CommandOutcome(timed_out=True)``),
-    never an exception — the procedure turns it into a FAIL verdict digest.
+    Drives ``docker exec`` synchronously under Host-owned deadlines. A timeout
+    resets the shared container and becomes a task-level outcome. Startup probes
+    also reset after completion or an early Host marker so no probe descendant can
+    survive. Failure to reset poisons the session and is an infrastructure error.
     """
 
-    def __init__(self, session: SecBenchContainerSession) -> None:
+    def __init__(
+        self,
+        session: SecBenchContainerSession,
+        *,
+        on_removed: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._session = session
+        self._on_removed = on_removed
+        self._execution_lock = asyncio.Lock()
+        self._usable = True
+        self._removed = False
         self.testcase_dir = session.workspace.host_testcase_dir
+        self.source_dir = session.workspace.host_source_dir
+        self.work_dir = session.workspace.host_work_root
+        self.identity_dir = sealer.sealed_dir(session.workspace.host_root)
 
-    async def run(self, command: str, *, timeout: float) -> CommandOutcome:  # noqa: ASYNC109
-        argv = [
-            "docker",
-            "exec",
-            "-i",
-            "-w",
-            self._session.workspace.container_working_directory,
-            self._session.container_id,
-            "bash",
-            "-lc",
-            command,
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=os.environ.copy(),
-        )
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float,
+        stdin: bytes | None = None,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome:  # noqa: ASYNC109
+        async with self._execution_lock:
+            self._ensure_usable()
+            return await self._run(argv, timeout=timeout, stdin=stdin, env=env)
+
+    async def run_until_marker(
+        self,
+        argv: tuple[str, ...],
+        *,
+        marker: str,
+        timeout: float,
+        env: tuple[tuple[str, str], ...] = (),
+    ) -> CommandOutcome:  # noqa: ASYNC109
+        if not marker:
+            raise ValueError("procedure success marker must not be empty")
+        async with self._execution_lock:
+            self._ensure_usable()
+            return await self._run_until_marker(
+                argv,
+                marker=marker,
+                timeout=timeout,
+                env=env,
+            )
+
+    @property
+    def usable(self) -> bool:
+        return self._usable
+
+    async def _run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        timeout: float,
+        stdin: bytes | None,
+        env: tuple[tuple[str, str], ...],
+    ) -> CommandOutcome:
+        if not argv:
+            raise ValueError("procedure argv must not be empty")
+        if timeout <= 0:
+            raise ValueError("procedure timeout must be positive")
+
+        docker_argv = self._docker_argv(argv, env=env)
+        deadline = asyncio.get_running_loop().time() + timeout
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            process = await self._start_safely(
+                docker_argv,
+                timeout=timeout,
+                pipe_stdin=stdin is not None,
+            )
+        except _ProcedureLaunchTimedOut:
+            return CommandOutcome(
+                exit_code=124,
+                output="",
+                termination=CommandTermination.TIMED_OUT,
+            )
+        communication = asyncio.ensure_future(process.communicate(input=stdin))
+        try:
+            stdout, _ = await asyncio.wait_for(
+                asyncio.shield(communication),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
         except TimeoutError:
-            process.kill()
-            try:
-                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5.0)
-            except TimeoutError:
-                stdout = b""
-                logger.warning("docker exec did not exit after kill: %s", command[:80])
+            stdout = await self._finish_interruption(
+                process,
+                docker_argv,
+                reason="timed out",
+                communication=communication,
+            )
             return CommandOutcome(
                 exit_code=124,
                 output=stdout.decode("utf-8", errors="replace"),
-                timed_out=True,
+                termination=CommandTermination.TIMED_OUT,
             )
+        except asyncio.CancelledError:
+            await self._finish_interruption(
+                process,
+                docker_argv,
+                reason="was cancelled",
+                communication=communication,
+            )
+            raise
+        except (OSError, RuntimeError):
+            await self._finish_interruption(process, docker_argv, reason="failed")
+            raise
         return CommandOutcome(
             exit_code=process.returncode or 0,
             output=stdout.decode("utf-8", errors="replace"),
         )
+
+    async def _run_until_marker(
+        self,
+        argv: tuple[str, ...],
+        *,
+        marker: str,
+        timeout: float,
+        env: tuple[tuple[str, str], ...],
+    ) -> CommandOutcome:
+        if not argv:
+            raise ValueError("procedure argv must not be empty")
+        if timeout <= 0:
+            raise ValueError("procedure timeout must be positive")
+
+        docker_argv = self._docker_argv(argv, env=env)
+        deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            process = await self._start_safely(
+                docker_argv,
+                timeout=timeout,
+                pipe_stdin=False,
+            )
+        except _ProcedureLaunchTimedOut:
+            return CommandOutcome(
+                exit_code=124,
+                output="",
+                termination=CommandTermination.TIMED_OUT,
+            )
+        output = bytearray()
+        try:
+            marker_seen = await asyncio.wait_for(
+                _read_until_marker_or_exit(
+                    process,
+                    marker.encode("utf-8"),
+                    output,
+                ),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
+        except TimeoutError:
+            await self._finish_interruption(process, docker_argv, reason="timed out")
+            return CommandOutcome(
+                exit_code=124,
+                output=output.decode("utf-8", errors="replace"),
+                termination=CommandTermination.TIMED_OUT,
+            )
+        except asyncio.CancelledError:
+            await self._finish_interruption(process, docker_argv, reason="was cancelled")
+            raise
+        except (OSError, RuntimeError):
+            await self._finish_interruption(process, docker_argv, reason="failed")
+            raise
+
+        reason = "stopped after startup marker" if marker_seen else "completed startup probe"
+        output.extend(await self._finish_interruption(process, docker_argv, reason=reason))
+        return CommandOutcome(
+            exit_code=process.returncode or 0,
+            output=output.decode("utf-8", errors="replace"),
+            termination=(
+                CommandTermination.STOPPED_AFTER_MARKER
+                if marker_seen
+                else CommandTermination.COMPLETED
+            ),
+        )
+
+    def _docker_argv(
+        self,
+        argv: tuple[str, ...],
+        *,
+        env: tuple[tuple[str, str], ...],
+    ) -> list[str]:
+        # Docker preserves the image's OSS-Fuzz environment (SRC, WORK, OUT,
+        # SANITIZER, compiler flags). Override only the command-specific values
+        # plus the fixed process-launch controls, which callers cannot replace.
+        procedure_env = dict(env)
+        procedure_env.update(_PROCEDURE_FIXED_ENV)
+        docker_env = [
+            item
+            for pair in procedure_env.items()
+            for item in ("--env", "=".join(pair))
+        ]
+        return [
+            "docker",
+            "exec",
+            "-i",
+            *docker_env,
+            "-w",
+            self._session.workspace.container_working_directory,
+            self._session.container_id,
+            *argv,
+        ]
+
+    def _ensure_usable(self) -> None:
+        if not self._usable:
+            raise ProcedureInfrastructureError(
+                "procedure container is unavailable after a failed reset"
+            )
+
+    async def _start(
+        self,
+        docker_argv: list[str],
+        *,
+        pipe_stdin: bool,
+    ) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            *docker_argv,
+            stdin=(asyncio.subprocess.PIPE if pipe_stdin else asyncio.subprocess.DEVNULL),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=os.environ.copy(),
+        )
+
+    async def _start_safely(
+        self,
+        docker_argv: list[str],
+        *,
+        timeout: float,
+        pipe_stdin: bool,
+    ) -> asyncio.subprocess.Process:
+        start = asyncio.create_task(self._start(docker_argv, pipe_stdin=pipe_stdin))
+        try:
+            return await asyncio.wait_for(asyncio.shield(start), timeout=timeout)
+        except TimeoutError as exc:
+            await self._finish_launch_interruption(
+                start,
+                docker_argv,
+                reason="timed out during launch",
+            )
+            raise _ProcedureLaunchTimedOut from exc
+        except asyncio.CancelledError:
+            await self._finish_launch_interruption(
+                start,
+                docker_argv,
+                reason="was cancelled during launch",
+            )
+            raise
+
+    async def _finish_launch_interruption(
+        self,
+        start: asyncio.Task[asyncio.subprocess.Process],
+        docker_argv: list[str],
+        *,
+        reason: str,
+    ) -> None:
+        cleanup = asyncio.create_task(
+            self._abort_launch(start, docker_argv, reason=reason)
+        )
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+        cleanup.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _abort_launch(
+        self,
+        start: asyncio.Task[asyncio.subprocess.Process],
+        docker_argv: list[str],
+        *,
+        reason: str,
+    ) -> None:
+        self._usable = False
+        start.cancel()
+        removal_error = await self._force_remove_container()
+        await asyncio.sleep(0)
+        if start.done():
+            _dispose_late_launch(start, docker_argv)
+        else:
+            start.add_done_callback(
+                lambda completed: _dispose_late_launch(completed, docker_argv)
+            )
+        if removal_error is not None:
+            raise ProcedureInfrastructureError(
+                f"procedure {reason} and the shared container could not be removed"
+            ) from removal_error
+        await self._confirm_removed()
+
+    async def _finish_interruption(
+        self,
+        process: asyncio.subprocess.Process,
+        docker_argv: list[str],
+        *,
+        reason: str,
+        communication: asyncio.Future[tuple[bytes, bytes]] | None = None,
+    ) -> bytes:
+        cleanup = asyncio.create_task(
+            self._reset_and_reap(
+                process,
+                docker_argv,
+                reason=reason,
+                communication=communication,
+            )
+        )
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+        output = cleanup.result()
+        if cancelled:
+            raise asyncio.CancelledError
+        return output
+
+    async def _reset_and_reap(
+        self,
+        process: asyncio.subprocess.Process,
+        docker_argv: list[str],
+        *,
+        reason: str,
+        communication: asyncio.Future[tuple[bytes, bytes]] | None,
+    ) -> bytes:
+        restart_error = await self._restart_container()
+        removal_error: OSError | RuntimeError | None = None
+        if restart_error is not None:
+            self._usable = False
+            removal_error = await self._force_remove_container()
+        if communication is None:
+            communication = asyncio.ensure_future(process.communicate())
+        try:
+            output = await self._reap_client(
+                process,
+                docker_argv,
+                communication=communication,
+            )
+        except (OSError, RuntimeError) as reap_error:
+            self._usable = False
+            if restart_error is None:
+                removal_error = await self._force_remove_container()
+            await self._settle_failed_client(process, communication, docker_argv)
+            if removal_error is None:
+                await self._confirm_removed()
+                raise ProcedureInfrastructureError(
+                    f"procedure {reason}; the docker exec could not be reaped, "
+                    "so the shared container was removed"
+                ) from reap_error
+            raise ProcedureInfrastructureError(
+                f"procedure {reason}; the docker exec could not be reaped and "
+                "the shared container could not be removed"
+            ) from removal_error
+        if restart_error is not None:
+            if removal_error is None:
+                await self._confirm_removed()
+            detail = "restarted or removed" if removal_error is not None else "restarted"
+            raise ProcedureInfrastructureError(
+                f"procedure {reason} and the shared container could not be {detail}"
+            ) from (removal_error or restart_error)
+        return output
+
+    async def _restart_container(self) -> OSError | RuntimeError | None:
+        try:
+            await docker_cli.run_checked(
+                ["docker", "restart", "--timeout", "0", self._session.container_id],
+                timeout=60.0,
+            )
+        except (OSError, RuntimeError) as exc:
+            return exc
+        return None
+
+    async def _force_remove_container(self) -> OSError | RuntimeError | None:
+        try:
+            await docker_cli.run_checked(
+                ["docker", "rm", "-f", self._session.container_id],
+                timeout=60.0,
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("procedure container could not be force-removed: %s", exc)
+            return exc
+        return None
+
+    async def _confirm_removed(self) -> None:
+        self._usable = False
+        if self._removed:
+            return
+        if self._on_removed is not None:
+            await self._on_removed()
+        self._removed = True
+
+    async def _reap_client(
+        self,
+        process: asyncio.subprocess.Process,
+        docker_argv: list[str],
+        *,
+        communication: asyncio.Future[tuple[bytes, bytes]],
+    ) -> bytes:
+        try:
+            stdout, _ = await asyncio.wait_for(
+                asyncio.shield(communication),
+                timeout=5.0,
+            )
+            return stdout
+        except TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            stdout, _ = await asyncio.wait_for(
+                asyncio.shield(communication),
+                timeout=5.0,
+            )
+            return stdout
+        except TimeoutError as exc:
+            logger.warning(
+                "docker exec did not exit after container reset: %s",
+                docker_argv[-8:],
+            )
+            raise ProcedureInfrastructureError(
+                "interrupted docker exec could not be reaped after container reset"
+            ) from exc
+
+    async def _settle_failed_client(
+        self,
+        process: asyncio.subprocess.Process,
+        communication: asyncio.Future[tuple[bytes, bytes]],
+        docker_argv: list[str],
+    ) -> None:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        communication.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(communication), timeout=5.0)
+        except (asyncio.CancelledError, TimeoutError, OSError, RuntimeError):
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except (TimeoutError, OSError, RuntimeError):
+            logger.warning(
+                "docker exec process did not terminate after container removal: %s",
+                docker_argv[-8:],
+            )
+
+
+def _dispose_late_launch(
+    start: asyncio.Task[asyncio.subprocess.Process],
+    docker_argv: list[str],
+) -> None:
+    try:
+        process = start.result()
+    except (asyncio.CancelledError, OSError, RuntimeError):
+        return
+    if process.returncode is None:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        logger.warning(
+            "killed docker exec client returned after container removal: %s",
+            docker_argv[-8:],
+        )
+
+
+async def _read_until_marker_or_exit(
+    process: asyncio.subprocess.Process,
+    marker: bytes,
+    output: bytearray,
+) -> bool:
+    if process.stdout is None:
+        raise ProcedureInfrastructureError("marker-aware docker exec has no output stream")
+    while chunk := await process.stdout.read(4096):
+        search_from = max(0, len(output) - len(marker) + 1)
+        output.extend(chunk)
+        if output.find(marker, search_from) >= 0:
+            return True
+    await process.wait()
+    return False

@@ -42,8 +42,8 @@ Three direct methods on `AgentOrchestrator` (`core/application/agent_orchestrato
 
 | Operation | Method | Input Role | What It Does |
 |-----------|--------|------------|--------------|
-| **assess_task** | `assess_task()` | PENDING | Single LLM call that decides: execute directly (promote to WORKER) or decompose (promote to MANAGER and spawn children). Can also return INFEASIBLE. This is the fork point of the agent tree. |
-| **evaluate_task** | `evaluate_task()` | BOSS / MANAGER | LLM decomposes the task into a `Subtask` list, spawns child agents for each. Parent transitions to WAITING. |
+| **assess_task** | `assess_task()` | PENDING | Applies a Host-owned initial phase route when the domain policy supplies one; otherwise one LLM call decides execute or decompose. Can also return INFEASIBLE. |
+| **evaluate_task** | `evaluate_task()` | BOSS / MANAGER | Applies a Host-owned initial route when supplied. Only a MANAGER recovering from child failure uses an LLM-generated revised route. Parent transitions to WAITING after children spawn. |
 | **execute_task** | `execute_task()` | WORKER | Dispatches work to a worker tool (Claude Code, OpenHands). Streams `DomainEvent`s back. Result verified by `VerificationPipeline`. |
 
 Role dispatch logic lives in `core/application/services/lifecycle/role_dispatch.py`.
@@ -70,10 +70,10 @@ Related types (all in `core/domain/values/node_message.py`): `Ancestor` (lightwe
 ## 5. Event Sourcing
 
 ### DomainEvent
-Base class for all immutable domain events (`core/domain/events/events.py`). Frozen Pydantic model with `event_id`, `aggregate_id`, `sequence_number`, `occurred_at`, `metadata`. All dict/list fields are deep-copied on construction via a `model_validator`. 38 concrete event types, all registered in `EVENT_TYPE_REGISTRY` (`infrastructure/adapters/postgres_event_store.py`).
+Base class for all immutable domain events (`core/domain/events/events.py`). Frozen Pydantic model with `event_id`, `aggregate_id`, `sequence_number`, `occurred_at`, `metadata`. All dict/list fields are deep-copied on construction via a `model_validator`. 42 concrete event types, all registered in `EVENT_TYPE_REGISTRY` (`infrastructure/adapters/postgres_event_store.py`).
 
 ### AgentSession (primary aggregate)
-The primary aggregate (`core/domain/aggregates/agent_session.py`), mutated by 35 of the 38 event types; `SharedStore` is a second event-sourced aggregate (see its entry below). All agent state is derived by replaying events via `singledispatchmethod` handlers. Factory: `AgentSession.create()` or `AgentSession.load_from_history()`. Uncommitted events accessed via `.events`, cleared by `mark_changes_as_committed()`. No mutable state tables exist.
+The primary aggregate (`core/domain/aggregates/agent_session.py`), mutated by 39 of the 42 event types; `SharedStore` is a second event-sourced aggregate (see its entry below). All agent state is derived by replaying events via `singledispatchmethod` handlers. Factory: `AgentSession.create()` or `AgentSession.load_from_history()`. Uncommitted events accessed via `.events`, cleared by `mark_changes_as_committed()`. No mutable state tables exist.
 
 ### OCC (Optimistic Concurrency Control)
 Concurrency strategy enforced by `EventStoreWritePort.append()` / `append_batch()` (`core/ports/event_store_port.py`). Each append specifies `expected_version`; if the actual version differs (another process wrote first), `ConcurrencyError` is raised (`core/domain/exceptions.py`). Unique constraint on `(aggregate_id, sequence_number)`.
@@ -110,10 +110,10 @@ Domain service that builds hierarchical prompts from Jinja2 templates (`core/app
 The `HierarchyLimits.domain_context: object | None` field (`core/domain/values/limits.py`) that carries plugin-specific data through the agent tree. Only the plugin downcasts it (e.g., to `CVEInstance`). Core remains fully domain-ignorant. Set via `HierarchyLimits.with_domain_context()`, checked via `has_domain_context()`.
 
 ### Procedural dispatch
-A flag-gated deterministic execution tier (`settings.orchestration.procedural_dispatch`, default off) that runs registry-matched worker tasks host-side with **zero LLM turns** -- no prompt, no worker session, no cost events. Core sees only `ProcedureExecutorPort` (`core/ports/procedure_ports.py`); a domain plugin supplies the registry and execution. `execute_task` runs a dispatch ladder (`_resolve_procedure_ref`): explicit `agentic` bypasses; explicit `procedural` with a resolvable ref runs it; an unknown ref downgrades to `auto` with a warning (fail open); `auto` consults `match()`. Success -> `WorkCompleted` through the normal verification pipeline; failure -> a `procedure_failure` digest + `WorkFailed`, then exactly one guaranteed *agentic* retry (a procedure never dispatches twice). Default off binds `NullProcedureExecutor`, so behavior is byte-identical to pre-feature.
+A flag-gated deterministic execution tier (`settings.orchestration.procedural_dispatch`, default off) that runs Host-registry-matched worker tasks with **zero LLM turns** -- no prompt, no worker session, no cost events. Core sees only `ProcedureExecutorPort` (`core/ports/procedure_ports.py`); a domain plugin supplies the registry and execution. `_resolve_procedure_ref` calls the Host's `match()` and verifies that result with `resolve()`; parent/LLM execution hints, refs, and params are not dispatch authority. Initial success -> `WorkCompleted` through the normal verification pipeline. Initial failure -> a `procedure_failure` digest + `WorkFailed`, then exactly one guaranteed *agentic* repair. A completed repair is provisional until exactly one Host procedure recheck succeeds; repair or recheck failure is terminal. Default off binds `NullProcedureExecutor`, so behavior is byte-identical to the agentic path.
 
 ### Execution mode
-The `Subtask.execution_mode` marking (`"auto"` | `"agentic"` | `"procedural"`, default `"auto"`) a parent attaches during decomposition, carried to the child via `AgentCreated`. Drives the procedural dispatch ladder; paired with `procedure_ref` and `procedure_params`.
+The `Subtask.execution_mode` metadata (`"auto"` | `"agentic"` | `"procedural"`, default `"auto"`) carried to the child via `AgentCreated`. It and the paired `procedure_ref` / `procedure_params` fields are retained for event provenance but do not override Host registry dispatch.
 
 ### ProcedureEvidence
 Host-captured, agent-unforgeable record of one procedure command (`argv`, `exit_code`, `output_sha256`, `excerpt`) in `core/domain/values/procedure.py`. Serialized per command onto `ProcedureExecutionFinished`, making determinism and validator verdicts verifiable from the event store rather than from agent-written verdict files (the SYSTEM_REFERENCE §V.7 by-construction fix).
@@ -154,10 +154,10 @@ When a worker fails, `RetryPolicy` may promote it to a more capable model from t
 Per-model failure counter in `RetryPolicy._model_failures` (`core/application/services/orchestration/retry_policy.py`). When a model's failure count reaches `circuit_breaker_threshold`, that model is skipped in the escalation chain. Prevents repeated failures with a broken model.
 
 ### Re-decomposition
-A parent re-decomposes via `AgentSession.trigger_redecomposition()` when a child reports INFEASIBLE **or** when ALL children fail and re-plan budget remains (`max_redecompositions`, default 2). Emits `RedecompositionTriggered`; first snapshots `failed_children` into `failure_history`, then clears child state (`child_ids`, `child_reports`, `failed_children`) and transitions parent WAITING -> ANALYZING. Tracked by `AgentSession.redecomposition_count`. The retained `failure_history` renders as a `<previous_attempt_failures>` block in the volatile tail of the BOSS/MANAGER decomposition prompt (`prompts/operations/decomposition_variable.j2`), so re-planning is *informed* by why the prior attempt failed while the cached prompt prefix stays byte-identical.
+Only a MANAGER receives a nonzero semantic re-plan budget from `ParentNotificationService`. When a child reports INFEASIBLE, or when all children fail and Manager budget remains, `AgentSession.trigger_redecomposition()` emits `RedecompositionTriggered`, snapshots `failed_children` into `failure_history`, clears child state, and transitions WAITING -> ANALYZING. The retained history renders in the volatile tail of the Manager prompt so the Manager can choose revised same-phase roles and instructions. A BOSS or any non-Manager fails upward instead of interpreting failure evidence.
 
 ### InfeasibleError
-Raised when the LLM reports a task cannot be completed under current constraints (`core/domain/exceptions.py`). Wraps a `ConstraintFailure` value object. Triggers parent re-decomposition or propagates failure up the tree.
+Raised when the LLM reports a task cannot be completed under current constraints (`core/domain/exceptions.py`). Wraps a `ConstraintFailure` value object. Triggers Manager re-decomposition when budget remains; otherwise it propagates failure up the tree.
 
 ### ConstraintFailure
 Frozen Pydantic value object representing an LLM response of `constraints_unsatisfiable` (`core/domain/values/constraint_failure.py`). Contains `reason`, optional `minimum_subtasks`, and `minimum_depth`. Detected via `ConstraintFailure.matches(data)` (checks for `status == "constraints_unsatisfiable"` in response dict).
@@ -169,7 +169,7 @@ Runs deterministic and judge-based verification on completed worker output (`cor
 A deterministic, LLM-free summary of a failed worker attempt, built by `build_failure_digest` (`core/application/services/orchestration/failure_digest.py`) from the aggregate's `error_message`, its `recent_thoughts` tool-output tail, and the retry count -- sections `FAILURE` / `LAST TOOL CALLS` / `ATTEMPT`, capped at 4000 chars via the shared `head_tail` (`truncation.py`). Recorded as `FailureDigestRecorded` (`source` = `worker_crash` or `procedure_failure`), retained across `RetryScheduled`, and injected into the retry prompt (`## Previous Attempt Failure (Retry)`) and the parent's `ChildFailureRecord`. Turns an opaque crash into reproducible, context-rich guidance for the next attempt.
 
 ### Self-healing failure loop
-The end-to-end resilience path layered on top of `RetryPolicy`: worker crash -> bounded traceback (`describe_error`, ~1.5 KB, `infrastructure/adapters/worker/shared/errors.py`) attached to the failure reason -> deterministic `failure_digest` -> context-rich worker retry (budget `verification_max_retries`) -> if all sibling workers still fail, an *informed* parent re-decomposition seeded with `failure_history`. Every step is event-sourced and no LLM is used to build the digest.
+The end-to-end resilience path layered on top of `RetryPolicy`: worker crash -> bounded traceback (`describe_error`, ~1.5 KB, `infrastructure/adapters/worker/shared/errors.py`) attached to the failure reason -> deterministic `failure_digest` -> context-rich worker retry (budget `verification_max_retries`) -> if all sibling workers still fail under a Manager, an informed Manager re-decomposition seeded with `failure_history`. Every step is event-sourced; no LLM builds the digest, and no BOSS performs semantic recovery.
 
 ---
 
@@ -194,7 +194,7 @@ Key methods: `for_child()` (increment depth), `can_spawn_child()`, `depth_remain
 Defined on `SystemLimitsPort` (`core/ports/runtime_ports.py`). Global wall-clock timeout for the entire execution run. Enforced by the system loop in `ExecutionService` (`core/application/execution_service.py`).
 
 ### max_redecompositions
-Tracked by `AgentSession.redecomposition_count` (default 2). Limits how many times a parent can re-decompose after child infeasibility **or** after all its children fail (informed re-decomposition).
+Tracked by `AgentSession.redecomposition_count`. `ParentNotificationService` applies the configured budget only to MANAGER agents after child infeasibility or all-child failure; every other role receives zero.
 
 ### HierarchyLimitsRegistry
 In-memory registry that tracks and propagates limits from parent to child (`core/application/services/lifecycle/hierarchy_limits_registry.py`). Methods: `create_root()`, `propagate_to_child()` (increments depth), `get()`, `set()`, `has_limits()`, `get_root_id()`. One registry per execution run, reset between runs.
@@ -206,7 +206,7 @@ In-memory registry that tracks and propagates limits from parent to child (`core
 All code in this category lives strictly under `plugins/security/`. No non-security code belongs here.
 
 ### CVEInstance
-Frozen Pydantic model representing a CVE from the SEC-bench dataset (`plugins/security/cve_instance.py`). Fields: `instance_id`, `repo`, `project_name`, `lang`, `work_dir`, `sanitizer`, `bug_description`, `base_commit`, `build_sh`, `secb_sh`, `dockerfile`, `patch`, `sanitizer_report`, `bug_report`. Computed fields: `cve_id`, `docker_image`, `expected_sanitizer_error`, `has_gold_patch`, `has_dockerfile`. Loaded from JSON via `from_json_file()`. Carried through the hierarchy as `domain_context`.
+Frozen Pydantic model representing a CVE from the SEC-bench dataset (`plugins/security/cve_instance.py`). Fields: `instance_id`, `repo`, `project_name`, `lang`, `work_dir`, `sanitizer`, `bug_description`, `base_commit`, `build_sh`, `secb_sh`, `dockerfile`, `patch`, `sanitizer_report`, `bug_report`. `bug_report`, `patch`, `candidate_fixes`, and `secb_sh` remain available to evaluation code but are excluded from solver prompt context. Computed fields: `cve_id`, `docker_image`, `expected_sanitizer_error`, `has_gold_patch`, `has_dockerfile`. Loaded from JSON via `from_json_file()`. Carried through the hierarchy as `domain_context`.
 
 ### SEC-bench
 The security vulnerability benchmark dataset. Each entry is a `CVEInstance` with a known vulnerability, build scripts, and expected sanitizer behavior. The system attempts to reproduce and fix vulnerabilities in containerized environments across three phases (builder, exploiter, fixer).

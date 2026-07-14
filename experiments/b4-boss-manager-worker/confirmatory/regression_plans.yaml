@@ -1,0 +1,349 @@
+plans:
+- instance_id: faad2.cve-2018-20196
+  base_commit: 334e7647a5f31903aca33dde39bb8683e9d8cccd
+  plan_sha256: 41f7a88b87216d48b92e8b084f9b74d74dbdd10794a00a4724b006f9ea80c7c3
+  generated_at: '2026-07-13T01:08:48Z'
+  work_dir: /src/faad2
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20196@sha256:4e591e6ac5e6c728cace36a31a0bcc84908915062a5eca4f7355ae0f5986bc17
+  base_validation_sha256: 728c5ace0e5860be5b67156360d572dd279112884347ff148a53b66a68dc32de
+  gold_validation_sha256: a457a3725e8ab1bca53354b3ecb1c86fe51cd5feb2ceb2512b415fdc041116d1
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: faad2.cve-2018-20362
+  base_commit: 334e7647a5f31903aca33dde39bb8683e9d8cccd
+  plan_sha256: ab210fefaf55b23cfcdd8411a3491ff5ba992b3d8830d9f3b5029e7f6421624c
+  generated_at: '2026-07-13T01:10:50Z'
+  work_dir: /src/faad2
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.faad2.cve-2018-20362@sha256:96f30ac6cb087eefb8ba095190779c741703794be53ba5679b50e76a4e1c94da
+  base_validation_sha256: fc1691c95f076a1bc8848427ee211f0b8c07ed5c1b4230a15df7fee593dbcfdd
+  gold_validation_sha256: 989b63dd504ef7aca8c366e865dbd147d39e9e1a8affe953d5272e376a4d8d26
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./frontend/faad -h 2>&1 | grep -q 'Ahead Software MPEG-4 AAC Decoder'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: libredwg.cve-2020-21818
+  base_commit: 7b9cb829f93d1c1f67584345ed65ea830de8bdda
+  plan_sha256: 45aaf07a9ef0b71f293273b91cef568d81d5fd5c0ac5d8d594d7c2943d6321bd
+  generated_at: '2026-07-13T01:12:43Z'
+  work_dir: /src/libredwg
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21818@sha256:0b9817077e66421b23e55f3d448831e3f52c352d1a5c24aeb5df860f313e6529
+  base_validation_sha256: 0ae195c6ec0db5f3c1ef9a67525d140e02759284ef792f38b85ba6c1a2356a98
+  gold_validation_sha256: d9f3f6b3bd18a6d9ed114a01020a7b4f35d4d9bbb9524e6b654d94c83ec7bf9d
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./programs/dwgread --help 2>&1 | grep -qi dwgread
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: libredwg.cve-2020-21819
+  base_commit: 5f998146dd695a8b4bfdbd21c233e42fbb94e90d
+  plan_sha256: 173c338ef90cf20a955b1bd6b23f2b62318b9207a1abcaddb9557ab7bb950c00
+  generated_at: '2026-07-13T01:15:50Z'
+  work_dir: /src/libredwg
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.libredwg.cve-2020-21819@sha256:bf1c3eb50b09694dd0282554a53f143668dfa09641977400565ca742a7cdd556
+  base_validation_sha256: 7485a1f74ede77d5ce1240e13b82e9f45fa6b92fe28a875f79b4e9e273aa4b53
+  gold_validation_sha256: 27186cde2fd1917e1b8023ff46d48e25193d3ed763fe5b437dc3d6cb2237bb06
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./programs/dwgread --help 2>&1 | grep -qi dwgread
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mruby.ossfuzz-42497373
+  base_commit: afbc199ed3b0820f156681548bf91290a2be48f4
+  plan_sha256: 40654cd80c364debda8c57cd253476ffc94b4e046c317873f823cd69c66182eb
+  generated_at: '2026-07-13T01:18:30Z'
+  work_dir: /src/mruby
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42497373@sha256:0583976556ce546b25ee6212d199d37e6ddaf8fccec38a256da638008df3719d
+  base_validation_sha256: cb1729d3bb71e478ca0220eb7ba213eb03c93646807c9e56ca866f796c6cb7b5
+  gold_validation_sha256: b6436f67db0ae36460aff24f3a8ac0df7d3c09feef6d9bf5db3a036aaffdc87f
+  commands:
+  - argv:
+    - ./build/host/bin/mruby
+    - -e
+    - raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mruby.ossfuzz-42501420
+  base_commit: cd0ffd6f1ca413f36b6239de7779ae7778e1a200
+  plan_sha256: c2e4a31bf62cf0ecc5c41f104de8eae16743ee1324213a2bdeaff3cb6e83db0b
+  generated_at: '2026-07-13T01:19:57Z'
+  work_dir: /src/mruby
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42501420@sha256:c5868153abd7fde21e5a5199881bcd401cd0f0d91c7ab2d17fa4ebdc83d31af9
+  base_validation_sha256: fd929cf36c7664471eba42f0941d31b9b67fada07bffa287192a85ab2f94b24c
+  gold_validation_sha256: f831095ff9291f3d2a0c9f69eabdd0c2de59011192dacac658216b1871c06769
+  commands:
+  - argv:
+    - ./build/host/bin/mruby
+    - -e
+    - raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mruby.ossfuzz-42503243
+  base_commit: 6b3b1012ca480f1e930c4ddeeaebed55e5df4144
+  plan_sha256: b2014073cc7a294397b1886883ffaae3c5e5e1e0033ae3ed47900093ec287b8d
+  generated_at: '2026-07-13T01:21:31Z'
+  work_dir: /src/mruby
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42503243@sha256:43b4bf0098704099a3703b10cd95f8785f2a5f64bf89885ce4496996e63005d0
+  base_validation_sha256: 85336dd3e1b870912f7460b06f5b3967bba1c5466b93839d35b87b7f9584fdd2
+  gold_validation_sha256: ad5182d6188d1efc8dbcb77eef67fd692c3483c143adc3925bcd8fe000677e7c
+  commands:
+  - argv:
+    - ./build/host/bin/mruby
+    - -e
+    - raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mruby.ossfuzz-42511322
+  base_commit: 49b8cef31f01c0d88d874e17714dff1fa5b85df0
+  plan_sha256: e97d39b165c6f4b9aaff8bdab64e065e728bee58d2aa3c45dd0a959f56ce147d
+  generated_at: '2026-07-13T01:23:06Z'
+  work_dir: /src/mruby
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42511322@sha256:6e1cb878ed25d9d83dcb0468a6dc35e1eadab68e28b776a4e93e161f3db464c6
+  base_validation_sha256: 6a0c40803fdf4353f9665dcab3ccf2665003d95b9e0363daaff1da43dd1676e1
+  gold_validation_sha256: bcfd7098432990d426c543122391f43be568410fb343fdd8b4a842894b8da745
+  commands:
+  - argv:
+    - ./build/host/bin/mruby
+    - -e
+    - raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mruby.ossfuzz-42532420
+  base_commit: 219cfd63e151360efe664728e3b5dbcf6e102d44
+  plan_sha256: 4978b90b5203dfd62a9f76645be28866cea2beae83764e88e374afb1c209e513
+  generated_at: '2026-07-13T01:24:42Z'
+  work_dir: /src/mruby
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mruby.ossfuzz-42532420@sha256:645b0e39d47887e816bc39ec5685dcdb76f7a32456071e9109c934681241572f
+  base_validation_sha256: d006577192c84564111f2ad6e277e4248ded8fb07ed4924057d9aa7e7a71d7ca
+  gold_validation_sha256: 1877faa95429ca7fc1ce5797866b4a9538e24606cf6554b0c7b1a0cf51703f70
+  commands:
+  - argv:
+    - ./build/host/bin/mruby
+    - -e
+    - raise unless [1,2,3].map { |x| x * 2 } == [2,4,6]
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: mupdf.ossfuzz-42520029
+  base_commit: 360a6e0772e48272a738a9d825ba554387892ff7
+  plan_sha256: dcfdc1751e5896090d64cead5ad0d101d00f774db1249e8964bcaa642209a747
+  generated_at: '2026-07-13T01:26:29Z'
+  work_dir: /src/mupdf
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.mupdf.ossfuzz-42520029@sha256:983d8d810e105a27941cf7607a23e14466190c6869034db7717bf1e02ba4cc2e
+  base_validation_sha256: 5cbc3eefbdcfd836ad99bd0958d540405513a93352649e0d68f75af821b62b59
+  gold_validation_sha256: a755dc61af2f39a2a27a86ed721bff0f59390178ff451d6f49d367af9c424df9
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - /out/mupdf/mutool -v 2>&1 | grep -q 'mutool version'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: njs.cve-2020-24348
+  base_commit: c3da13fb18f0d8ec809b346096feab572e634486
+  plan_sha256: be803df62e5e38d6a92ff5f4d9713a979da4892326fcf10cc2aa80c9ad34fb3e
+  generated_at: '2026-07-13T01:29:54Z'
+  work_dir: /src/njs
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.njs.cve-2020-24348@sha256:87cac4f3666b983d0e5d74c94ddd141f2344b026a2e5bb0ee0725548747d7471
+  base_validation_sha256: 5b06f4d505aad9a68320f804753c2c4b08231d1401ce06f38230c9f22d1bf58c
+  gold_validation_sha256: 099d3215e8d359293c04da755bb38bb4499245634586077c30d94c4226c5d75e
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/njs -v 2>&1 | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: njs.cve-2022-32414
+  base_commit: f65981b0b8fcf02d69a40bc934803c25c9f607ab
+  plan_sha256: c89db247c69bf7aceeedbffe7586de8555ea46a14eeb4c7fe7e7285146b85e16
+  generated_at: '2026-07-13T01:30:56Z'
+  work_dir: /src/njs
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.njs.cve-2022-32414@sha256:8b9c17cc6ae2b7aae0d2d2c3f4e4e9a9ea16e663a825ac798984c54155f4b291
+  base_validation_sha256: bd887151a723e1fc3dc983f84468e58839e4665b781da4507f6c49fa10612340
+  gold_validation_sha256: e7a2b5097c88499a751b29595d0ca68862d335c70b54b91a29213543028a22c0
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/njs -v 2>&1 | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: openjpeg.cve-2017-14041
+  base_commit: 5597522cac96b1bc6d48a447751b1c6049248eef
+  plan_sha256: a05420fdefa516b9bc6db9ac3d1697d2b6fcfb70a6b6f1ddc0baf6f1bdb4d4c7
+  generated_at: '2026-07-13T01:32:05Z'
+  work_dir: /src/openjpeg
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.openjpeg.cve-2017-14041@sha256:84012bfa467b95e0ae20ef09c75c65478095f35c247c66ab7d937dad1de3351c
+  base_validation_sha256: d929894046554ad3a7e86f2b10aa1a8cf5acef833ba03faae9133fa58cc14dd1
+  gold_validation_sha256: 3315039ad5cd4f0ab1172c1ce1c6db5555c754c5c8a8efd16a4f3cda62c0878e
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: openjpeg.cve-2024-56827
+  base_commit: 4ec0aca4d733a852186bbce82e58043095a372d4
+  plan_sha256: fe1be412902366a6e390065e85910be6248cfd9478a22734f1f99c4f7f316a06
+  generated_at: '2026-07-13T01:32:53Z'
+  work_dir: /src/openjpeg
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a
+  base_validation_sha256: 8a7065af07da77aec53956446198cc05883357024a3a88c88a5aeece9e50e52c
+  gold_validation_sha256: 664b2f5f4b5f42edd855ebde94bcf00bb8d5811747d4b05c246b529a8ce4f7e5
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/bin/opj_compress -h 2>&1 | grep -qi 'JPEG 2000'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: upx.ossfuzz-402200343
+  base_commit: 24b4ec42e701814b5bf55685f6fbc81e25f1044c
+  plan_sha256: 3a5c94d2a7009208baa7d7a3742ba765a97cc1eed830f828889565ed5facdea9
+  generated_at: '2026-07-13T01:33:56Z'
+  work_dir: /src/upx
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.upx.ossfuzz-402200343@sha256:93323c5c6679a84d54cda600519ffbe30d37784b60fa616cd685eb7bda1869a1
+  base_validation_sha256: a9f5e42769c6cff375a958cc25964f9c247621211a1aaf5600e78ff1e059457a
+  gold_validation_sha256: bcc0a6ab876763384fa1f5c4b547349cf7491f975d1f7ebee853023c411d655c
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/debug/upx --version 2>&1 | grep -qi UPX
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: upx.ossfuzz-42531653
+  base_commit: 3dca1175e5899b54ac97e2ffab38dc5191cc4be4
+  plan_sha256: 85a9740d16faffda2174a2868248d5384e7e14a4676c818768267dfd0062ed9d
+  generated_at: '2026-07-13T01:38:45Z'
+  work_dir: /src/upx
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531653@sha256:f1fa88c9a2f1fb5e4b3f0b8a5a86942f7e7b739e7f88edeefa1072678da6c75d
+  base_validation_sha256: cbd7616f3d7ed0b147960ec03ce16126989f96d1603478788b98b2f3bc46d2ea
+  gold_validation_sha256: 6fa96889dc224c24f898b70d76035a2950ac03b9e795f2526ab30f5823953091
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/debug/upx --version 2>&1 | grep -qi UPX
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: upx.ossfuzz-42531672
+  base_commit: d549c2b5c9a2880ba03b6522e055bbe673fa7753
+  plan_sha256: 428b7d603d4344d7f97d44539371bb55b88ad08f357baa4c10633f4c90a6dabb
+  generated_at: '2026-07-13T01:43:07Z'
+  work_dir: /src/upx
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.upx.ossfuzz-42531672@sha256:4bf81cab9ad77881dc7eb68414fcece580e0ebaa0538206a8ba2843679048b5d
+  base_validation_sha256: 32b314d406ecb11c992c3971a20e7d1b4b3812f4d5f5f468f8a8532e433c8b7f
+  gold_validation_sha256: 25c448891b425397f71d17c467ee70d2728692afc8f8244b2de5894e64e88b69
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/debug/upx --version 2>&1 | grep -qi UPX
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: wasm3.ossfuzz-42495624
+  base_commit: cfbfbbff1531b4eaf7e557816ea4649e4e259cb1
+  plan_sha256: 2fe645c008db4d80a0474bf30abbb6d8886b2e2c067819b907d65c136c395950
+  generated_at: '2026-07-13T01:47:22Z'
+  work_dir: /src/wasm3
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.wasm3.ossfuzz-42495624@sha256:cf27010cdccbad5510a8b2125c0b6b938769834af099cf0b1631b686f2d1c3b6
+  base_validation_sha256: 4271de0b7b39255a6c61147da9399eada0009478ae0cd26b7c48735a98a39fc3
+  gold_validation_sha256: 00ff9e3e1d86fdfe0beb8ad507313cf10be3167e200f1890c898bbe257d33f59
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./build/wasm3 --version 2>&1 | grep -qi wasm3
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+- instance_id: yara.cve-2023-40857
+  base_commit: d1ff3ecc465d7ed882943fd1278dd8981b704f02
+  plan_sha256: 0d8376462dcfa35b4e498ba9cef8d45ec828d1fe3d8467999186b9ae6416e82a
+  generated_at: '2026-07-13T01:47:46Z'
+  work_dir: /src/yara
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  image_digest: hwiwonlee/secb.eval.x86_64.yara.cve-2023-40857@sha256:5af23c11359efe21f51ea80e0b7fcc74184d8c391516ac7e6c87bf1573c4cccd
+  base_validation_sha256: 668d41bf70873c4882efef47f6a7173330f0ca603452c4a233d4ca79eeac28bc
+  gold_validation_sha256: ad98de0c9a6de91b7170b041517708a3df7f0feb1606fb02602ceb2f3b224686
+  commands:
+  - argv:
+    - bash
+    - -lc
+    - ./yara --version 2>&1 | grep -Eq '^[0-9]+\.'
+    timeout_seconds: 60.0
+    required: true
+    cwd: .
+meta:
+  generator_model: container-probe-v1
+  dataset_revision: SEC-bench/SEC-bench@eval
+  arm_identity: identical_plan_for_N1_and_B4
+  validation: base_and_gold_patched_container
+  plan_set_sha256: c102617ca7e68ceddbf30d490a44a68f168647453f17fe1cd8554250e108d88a

@@ -20,8 +20,10 @@ from infrastructure.adapters.worker import OpenHandsAdapter
 from infrastructure.cleanup.docker_pid import docker_pid_cleanup
 from infrastructure.workers import ClaudeCodeWorker, OpenHandsWorker
 from plugins.security import CVEInstance, SecurityDomainPlugin
+from plugins.security.config import SecurityPluginConfig
 from plugins.security.docker_runtime import DockerSecBenchRuntime
 from presentation.cli import CLI, CLIConfig
+from presentation.persistence.invocation_hash import compute_config_sha256
 
 from .application import ApplicationConfig, get_application
 from .infrastructure import InfrastructureConfig, get_infrastructure
@@ -30,11 +32,16 @@ from .infrastructure import InfrastructureConfig, get_infrastructure
 logger = logging.getLogger(__name__)
 
 
+def _effective_config_hash(settings: Settings) -> str:
+    """Hash the redacted effective settings, including opaque run provenance."""
+    return compute_config_sha256(settings)
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from config import ApiSettings, Settings
+    from config import ApiSettings, Settings, ToolCallingConfig
     from core.application.execution_service import (
         FlatInvariantBuilder,
         ProgressCallback,
@@ -52,26 +59,38 @@ class DomainComponents:
     plugin: DomainPlugin | None = None
     prompt_strategy: PromptStrategy | None = None
     domain_key: str | None = None
+    tool_policy: dict[str, object] | None = None
+    artifact_subdirectory: str | None = None
+
+
+def _security_config(settings: Settings | ApiSettings) -> SecurityPluginConfig:
+    options = settings.domain_plugins
+    raw = options.get("security", {}) if isinstance(options, dict) else {}
+    return SecurityPluginConfig.model_validate(raw)
 
 
 def _build_security_components(settings: Settings | ApiSettings) -> DomainComponents:
-    if not settings.security.enabled:
+    security = _security_config(settings)
+    if not security.enabled:
         return DomainComponents()
 
     runtime = DockerSecBenchRuntime(
-        network_mode=settings.security.worker_network_mode,
-        timeout_seconds=settings.security.worker_docker_timeout_seconds,
-        tools_image_registry=settings.security.tools_image_registry,
+        network_mode=security.worker_network_mode,
+        timeout_seconds=security.worker_docker_timeout_seconds,
+        tools_image_registry=security.tools_image_registry,
     )
     plugin = SecurityDomainPlugin(
-        enabled_tools=settings.security.tools,
+        enabled_tools=security.tools,
         shared_code_prefix_first=settings.orchestration.shared_code_prefix_first,
+        route_policy_version=security.route_policy_version,
     )
     plugin.set_container_runtime(runtime)
     return DomainComponents(
         plugin=plugin,
         prompt_strategy=plugin.get_prompt_strategy(),
         domain_key="secbench",
+        tool_policy=security.tool_policy,
+        artifact_subdirectory="testcase",
     )
 
 
@@ -80,6 +99,24 @@ _DOMAIN_COMPONENT_BUILDERS: dict[str, Callable[[Settings | ApiSettings], DomainC
 }
 
 _DOMAIN_COMPONENT_ORDER: tuple[str, ...] = tuple(_DOMAIN_COMPONENT_BUILDERS)
+
+
+def available_domain_names() -> tuple[str, ...]:
+    """Return domain names registered at the composition root."""
+    return _DOMAIN_COMPONENT_ORDER
+
+
+def _tool_calling_config(
+    settings: Settings, components: DomainComponents
+) -> ToolCallingConfig:
+    tool_calling = settings.orchestration.tool_calling
+    if components.domain_key is None or components.tool_policy is None:
+        return tool_calling
+    policies = tool_calling.policies.to_raw_dict()
+    policies.setdefault("domains", {})[components.domain_key] = components.tool_policy
+    return tool_calling.model_copy(
+        update={"policies": type(tool_calling.policies).model_validate(policies)}
+    )
 
 
 def build_domain_plugin(settings: Settings | ApiSettings) -> DomainPlugin | None:
@@ -166,8 +203,8 @@ def _flat_subagent_enabled(settings: Settings) -> bool:
     excluding ``Task`` would still get the note — revisit the predicate when
     introducing such a config). ``openhands`` gates its native
     task-delegation tool behind ``tool_params.openhands.enable_subagents``,
-    which is also what arms the tool in the adapter — note and capability
-    stay in lockstep (N1 vs N2 contrast).
+    which is also what arms the tool in the adapter, so note and capability
+    stay in lockstep.
     """
     if settings.worker.tool == "openhands":
         params = settings.worker.tool_params.openhands
@@ -223,9 +260,7 @@ def _make_flat_invariant_builder(
         tool_policy = ToolPolicy(
             allowed=tuple(settings.worker.allowed_tools),
             disallowed=tuple(settings.worker.disallowed_tools),
-            allowed_bash_commands=(
-                tuple(settings.security.tools) if settings.security.enabled else ()
-            ),
+            allowed_bash_commands=tuple(_security_config(settings).tools),
         )
 
         rendered_prompt = prompt_builder.build_flat_prompt(
@@ -237,7 +272,7 @@ def _make_flat_invariant_builder(
         spec = TaskPromptSpec(
             rendered_prompt=rendered_prompt,
             prompt_sha=sha256(rendered_prompt.encode("utf-8")).hexdigest(),
-            cve_context=domain_context.to_template_context(),
+            domain_context=domain_context.to_template_context(),
             task=task,
         )
         return FlatModeBundle(
@@ -283,6 +318,7 @@ def create_runtime_cli(
             pool_max=settings.database.pool_max,
             default_worker_tool=settings.worker.tool,
             worker_tool_model=settings.worker.model,
+            worker_model_overrides=dict(settings.worker.model_overrides),
             worker_tool_timeout=settings.worker.timeout,
             worker_allowed_tools=list(settings.worker.allowed_tools),
             worker_disallowed_tools=list(settings.worker.disallowed_tools),
@@ -305,6 +341,9 @@ def create_runtime_cli(
             shared_code_skip_dir_listings=settings.orchestration.shared_code_skip_dir_listings,
             shared_code_render_mode=settings.orchestration.shared_code_render_mode,
             shared_code_index_enabled=settings.orchestration.shared_code_index,
+            scoped_worker_context=settings.orchestration.scoped_worker_context,
+            source_context_token_budget=settings.orchestration.source_context_token_budget,
+            metadata_context_token_budget=settings.orchestration.metadata_context_token_budget,
             format_repairer_enabled=settings.format_repairer.enabled,
             format_repairer_model=settings.format_repairer.model,
             format_repairer_max_tokens=settings.format_repairer.max_tokens,
@@ -342,7 +381,7 @@ def create_runtime_cli(
         ApplicationConfig(
             topology=settings.orchestration.topology,
             concurrency=settings.orchestration.concurrency,
-            tool_calling=settings.orchestration.tool_calling,
+            tool_calling=_tool_calling_config(settings, active_domain_components),
             max_retries=settings.orchestration.max_retries,
             poll_interval=settings.orchestration.poll_interval,
             max_run_duration_seconds=settings.orchestration.max_run_duration_seconds,
@@ -358,6 +397,8 @@ def create_runtime_cli(
             capture_recon_reads=settings.orchestration.capture_recon_reads,
             share_boss_recon=settings.orchestration.share_boss_recon,
             procedural_dispatch=settings.orchestration.procedural_dispatch,
+            treatment_version=settings.orchestration.treatment_version,
+            config_hash=_effective_config_hash(settings),
             boss_config=settings.boss,
             manager_config=settings.manager,
             output_directory=settings.output.directory,

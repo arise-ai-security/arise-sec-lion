@@ -30,15 +30,15 @@ class OpenHandsParams(BaseModel):
         le=3600,
         description=(
             "Per-call timeout (seconds) for OpenHands MCP tools (e.g. "
-            "shell_in_container). Applied to the SDK so every cell shares one "
-            "shell timeout — keep it identical across cells for a fair comparison."
+            "shell_in_container). Applied to the SDK so all workers in a run "
+            "share one consistent shell timeout."
         ),
     )
     enable_subagents: bool = Field(
         default=False,
         description=(
             "Expose OpenHands' native task-delegation tool so the worker can "
-            "spawn a bounded two-level tree of child agents (N2 baseline)."
+            "spawn a bounded two-level tree of child agents."
         ),
     )
     run_scoped_prompt_cache_key: bool = Field(
@@ -82,6 +82,14 @@ class WorkerConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     model: str
+    model_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Task-prefix → worker-model overrides; the first key the worker's task "
+            "description starts with wins (e.g. '[Analysis]': model-name). "
+            "Falls back to model when nothing matches."
+        ),
+    )
     tool: Literal["claude_code", "openhands", "google_adk"]
     allowed_tools: list[str] = Field(default_factory=lambda: ["*"])
     disallowed_tools: list[str] = Field(default_factory=list)
@@ -109,7 +117,7 @@ class WorkerConfig(BaseModel):
         default_factory=dict,
         description=(
             "Task-prefix → reasoning-effort overrides; the first key the worker's "
-            "task description starts with wins (e.g. '[Exploiter]': medium). "
+            "task description starts with wins (e.g. '[Analysis]': medium). "
             "Falls back to reasoning_effort when nothing matches."
         ),
     )

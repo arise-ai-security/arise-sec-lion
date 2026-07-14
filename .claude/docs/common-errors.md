@@ -218,7 +218,7 @@ Fix: Increase `orchestration.max_run_duration_seconds` (default 1800). Or reduce
 Constraints unsatisfiable: <reason> (needs at least <N> subtasks)
 ```
 
-Source: `core/domain/services/subtask_parser.py`. When the LLM responds with `"status": "constraints_unsatisfiable"`, an `InfeasibleError` is raised. The agent is marked infeasible via `DecisionInfeasible` event. Parent re-decomposes up to `max_redecompositions` (default 2) times.
+Source: `core/domain/services/subtask_parser.py`. When the LLM responds with `"status": "constraints_unsatisfiable"`, an `InfeasibleError` is raised. The agent is marked infeasible via `DecisionInfeasible`. A MANAGER may re-decompose while its configured budget remains; a BOSS or other parent fails upward.
 
 Fix: Relax `topology.max_depth`, `topology.max_children_per_node`, or `topology.max_total_agents`.
 

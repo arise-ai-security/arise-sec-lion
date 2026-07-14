@@ -5,7 +5,7 @@ hypothesis: >
   same BEF 4-phase pipeline prompt + CVE context as the B-cells and writes the
   same /testcase deliverables, so cost/outcome differences are attributable to
   coordination structure alone. Family hypothesis on normalized cost:
-  N1,N2 > B3 > B4.
+  N1 > B3 > B4.
 dataset: dataset.yaml
 replicates: 1
 cells:

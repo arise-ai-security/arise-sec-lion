@@ -34,4 +34,4 @@
 {% endfor -%}
 ```
 
-The `[Patch-Creator]` subtask's task description MUST instruct the worker to extract `PROPOSED_FIX_SITE` from that block as its default fix location and to write a one-paragraph justification if it deviates. The `[Patch-Creator]` subtask MUST also include a no-scope-creep rule: *"The diff MUST contain only the change that fixes this CVE. Do NOT add unrelated NULL-checks, defensive hardening, or error handling for paths the PoC does not exercise. If the diff has more than one logical hunk or touches more than one function, justify each extra hunk against the analyst's block."*
+The `[Patch-Applier]` subtask is procedural: apply the approved manager PatchPlan literally. On any hash, anchor, evidence, allowlist, or postcondition mismatch, emit `PATCH_PLAN_BLOCKED` and make no edits. It MUST NOT invent or broaden the patch.

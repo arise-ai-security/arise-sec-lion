@@ -83,8 +83,12 @@ class AgentRepository:
         """
         uncommitted = list(agent.events)
 
+        if len(uncommitted) > 1:
+            await self._event_store.append_batch(uncommitted)
+        elif uncommitted:
+            await self._event_store.append(uncommitted[0])
+
         for event in uncommitted:
-            await self._event_store.append(event)
             self._notify_progress(event, agent)
 
         agent.mark_changes_as_committed()

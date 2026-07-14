@@ -2,7 +2,7 @@
 into the base recursively. Returns a dict ready for
 ``Settings._build_from_config``.
 
-A cell config like::
+An overlay config like::
 
     extends: config/config.yaml
     overrides:

@@ -11,6 +11,8 @@ from core.domain.events.events import (
     ComplexityEvaluated,
     DecisionInfeasible,
     DomainEvent,
+    PostStepCompleted,
+    PostStepRequested,
     RedecompositionTriggered,
     RetryScheduled,
     StatusChanged,
@@ -41,6 +43,9 @@ class AgentSummaryReadModel:
     is_terminal: bool
     sibling_index: int  # Position among siblings for ordering
     depends_on: tuple[int, ...]  # Sibling indices this agent depends on (DAG scheduling)
+    criticality: str = "required"
+    dependency_failure_policy: str = "block"
+    post_step_pending: bool = False
 
     @classmethod
     def from_events(cls, events: list[DomainEvent]) -> AgentSummaryReadModel | None:
@@ -71,12 +76,16 @@ class AgentSummaryReadModel:
         parent_id = first_event.parent_id
         sibling_index = first_event.sibling_index
         depends_on = tuple(first_event.depends_on)
+        criticality = first_event.criticality
+        dependency_failure_policy = first_event.dependency_failure_policy
 
         # Default values
         task_summary = ""
         status = "pending"  # Default after creation
 
-        # Process events to extract status, task, and role changes
+        pending_post_steps = set()
+
+        # Process events to extract status, task, role changes, and post-step state
         for event in events:
             if isinstance(event, TaskAssigned):
                 task_summary = event.task_description[:100]  # Truncate for summary
@@ -100,6 +109,10 @@ class AgentSummaryReadModel:
             elif isinstance(event, RedecompositionTriggered):
                 # WAITING → ANALYZING: parent re-decomposes after child infeasible
                 status = "analyzing"
+            elif isinstance(event, PostStepRequested):
+                pending_post_steps.add(event.terminal_event_id)
+            elif isinstance(event, PostStepCompleted):
+                pending_post_steps.discard(event.terminal_event_id)
 
         is_terminal = status in ("completed", "failed")
 
@@ -112,4 +125,7 @@ class AgentSummaryReadModel:
             is_terminal=is_terminal,
             sibling_index=sibling_index,
             depends_on=depends_on,
+            criticality=criticality,
+            dependency_failure_policy=dependency_failure_policy,
+            post_step_pending=bool(pending_post_steps),
         )

@@ -44,11 +44,16 @@ testpaths = [
     "core/application/tests",
     "core/query/tests",
     "infrastructure/tests",
+    "infrastructure/adapters/worker/tests",
     "presentation/tests",
     "bootstrap/tests",
     "config/tests",
     "plugins/security/tests",
+    "experiments/shared/evaluation/tests",
     "tests/experiments",
+    "experiments/shared/tests",
+    "experiments/shared/scripts/tests",
+    "tests/integration",
 ]
 markers = [
     "e2e: end-to-end tests (require full infrastructure)",

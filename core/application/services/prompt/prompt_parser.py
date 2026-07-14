@@ -73,8 +73,9 @@ class PromptParser:
         (r"sibling|coworker|peer", SectionProvenance.SIBLING),
         (r"child|outcome", SectionProvenance.CHILDREN),
         (r"shared|global|context-update|decision|artifact", SectionProvenance.SHARED),
-        (r"workspace|user_prompt|bug_report", SectionProvenance.SYSTEM),
+        (r"workspace|user_prompt", SectionProvenance.SYSTEM),
     ]
+
     def __init__(
         self,
         extra_tag_mappings: dict[str, SectionProvenance] | None = None,

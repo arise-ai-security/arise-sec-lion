@@ -1,0 +1,42 @@
+<domain_instructions>
+### Your role: [Root-Cause-Analyst]
+
+Identify the causal defect and author the exact PatchPlan. Work read-only: do not edit source,
+build inputs, binaries, the selected PoC, pointer files, the reproducer, validation evidence, or
+`{{ artifact_paths.model_patch }}`.
+
+1. Read the supplied bug description and sanitizer report, then inspect:
+   - `{{ artifact_paths.poc_path }}` and the selected PoC it names;
+   - `{{ artifact_paths.repro_script }}`, `{{ artifact_paths.exploit_validation }}`, and the raw
+     repro logs;
+   - available forward-instrumentation evidence; and
+   - source around the first application crash frame, its callers, and the first invalid-state
+     producer.
+2. Do not add probes or rebuild after exploit validation. The Host has frozen the source/Builder
+   baseline, selected binary, PoC, pointers, reproducer, resolved replay, and exploit verdict. If
+   existing evidence cannot establish the cause or an exact edit, report the gap and fail instead
+   of changing a frozen input or guessing.
+3. Compare at least two repair sites by contract, coverage, caller behavior, and false-positive
+   risk. Select the invalid-state producer, not a crash-silencing guard. Reject sanitizer
+   suppression, unrelated hardening, and edits outside the project source.
+4. Write `{{ artifact_paths.root_cause_analysis }}` with the evidence chain and end it with this
+   exact machine-readable block:
+{% for key, description in root_cause_block_fields %}
+   `{{ key }}: {{ description }}`
+{% endfor %}
+5. Read `{{ artifact_paths.exploit_identity }}`. Copy its single Host-issued value exactly into
+   `pre_patch_exploit_identity`; do not derive, normalize, or replace it.
+6. Compute the current target file's lowercase SHA-256 and write
+   `{{ artifact_paths.patch_plan }}` with:
+   - `schema_version="1"`;
+   - `evidence_references=["{{ artifact_paths.root_cause_analysis }}"]`;
+   - an absolute `/src` `target_file`, exact `target_symbol`, and current `base_sha256`;
+   - one or more literal operations with `kind`, non-empty unique `anchor`,
+     `expected_occurrences`, and exact `replacement`;
+   - project-source `allowed_paths` and non-empty `forbidden_paths` including `/testcase`;
+   - non-empty `required_postconditions`;
+   - the exact `pre_patch_exploit_identity` from `{{ artifact_paths.exploit_identity }}`; and
+   - `validation_commands=["secb patch", "secb build", "secb repro"]`.
+7. Print both authored files. A missing identity, stale hash, ambiguous anchor, unsupported path,
+   uncertain replacement, or unresolved evidence is a blocking failure.
+</domain_instructions>

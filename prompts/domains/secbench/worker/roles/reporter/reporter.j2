@@ -1,0 +1,34 @@
+<domain_instructions>
+### Your role: [Reporter]
+
+Write the final evidence-backed report. The report records the in-run result; the fresh official
+evaluator is final authority.
+
+1. Read canonical artifacts directly when present:
+   - `{{ artifact_paths.base_commit_hash }}`, `{{ artifact_paths.repo_changes_diff }}`,
+     `{{ artifact_paths.binary_paths }}`, `{{ phase_commands.build.exit }}`, and
+     `{{ phase_commands.build.log }}`;
+   - `{{ artifact_paths.poc_path }}`, the selected PoC, `{{ artifact_paths.repro_script }}`,
+     `{{ artifact_paths.exploit_identity }}`, `{{ artifact_paths.exploit_validation }}`, and
+     `{{ phase_commands.repro_loop.read_log }}`;
+   - `{{ artifact_paths.root_cause_analysis }}`, `{{ artifact_paths.patch_plan }}`,
+     `{{ artifact_paths.model_patch }}`, `{{ artifact_paths.patch_validation }}`,
+     `{{ phase_commands.fix_loop.log }}`, `{{ phase_commands.fix_loop.read_log }}`, and
+     `{{ artifact_paths.fix_summary }}`.
+2. Read Host-authored procedure verdict/evidence and failure digests supplied in the briefing.
+   Resolve conflicts toward raw command output and Host-authored evidence over worker summaries.
+   Never turn a FAIL, missing artifact, incomplete run, or agent-only claim into success. Do not
+   infer a successful fix from a patch file or worker completion message.
+3. Write `{{ artifact_paths.security_report }}` with:
+   - executive summary and explicit in-run status;
+   - vulnerability details and causal path with exact source paths/functions;
+   - reproduction command, termination, sanitizer signature, and raw-log references;
+   - approved plan and literal patch scope;
+   - patch/build/replay and regression results, including failures or unavailable evidence; and
+   - phase/role execution summary with evidence references.
+4. Cite exact artifact paths, commands, exit codes, and raw outputs. Distinguish Host-authored
+   evidence from agent-authored files. State that the shared-container report cannot override the
+   fresh official evaluator.
+5. Read `{{ artifact_paths.security_report }}` back and require it to be non-empty. A text-only
+   response without the canonical file is a task failure.
+</domain_instructions>

@@ -12,16 +12,24 @@ class HierarchyLimitsRegistry:
 
     def __init__(self) -> None:
         self._limits: dict[UUID, HierarchyLimits] = {}
-        self._used_roles: dict[UUID, set[str]] = {}  # root_id → role prefixes
+        self._completed_roles: dict[UUID, set[str]] = {}  # root_id → completed roles
+        self._failed_roles: dict[UUID, set[str]] = {}  # root_id → failed roles
         self._parent_children: dict[UUID, set[UUID]] = {}  # parent_id → child_ids
         self._agent_role_prefix: dict[UUID, str] = {}  # agent_id → role prefix
+        self._current_role_generation: dict[tuple[UUID, str], UUID] = {}
+        self._current_child_dags: dict[
+            UUID, dict[UUID, tuple[UUID, ...]]
+        ] = {}  # parent_id → current child_id → sibling predecessor ids
 
     def reset(self) -> None:
         """Clear all limits for a new run."""
         self._limits.clear()
-        self._used_roles.clear()
+        self._completed_roles.clear()
+        self._failed_roles.clear()
         self._parent_children.clear()
         self._agent_role_prefix.clear()
+        self._current_role_generation.clear()
+        self._current_child_dags.clear()
 
     def create_root(
         self,
@@ -61,18 +69,96 @@ class HierarchyLimitsRegistry:
         return limits.root_id
 
     # ------------------------------------------------------------------
-    # Cross-tree role dedup tracking
+    # Current child-generation dependency tracking
+    # ------------------------------------------------------------------
+
+    def replace_child_generation(
+        self,
+        parent_id: UUID,
+        child_dependencies: dict[UUID, tuple[UUID, ...]],
+    ) -> None:
+        """Replace a parent's active child DAG after an initial plan or re-plan."""
+        self._current_child_dags[parent_id] = dict(child_dependencies)
+        self._parent_children[parent_id] = set(child_dependencies)
+
+    def expand_to_terminal_sinks(
+        self, predecessor_ids: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
+        """Resolve grouping predecessors to terminal sinks of their current child DAGs."""
+        expanded: list[UUID] = []
+        for predecessor_id in predecessor_ids:
+            for sink_id in self._terminal_sinks(predecessor_id):
+                if sink_id not in expanded:
+                    expanded.append(sink_id)
+        return tuple(expanded)
+
+    def _terminal_sinks(self, agent_id: UUID) -> tuple[UUID, ...]:
+        child_dag = self._current_child_dags.get(agent_id)
+        if not child_dag:
+            return (agent_id,)
+        depended_on = {
+            dependency_id
+            for dependencies in child_dag.values()
+            for dependency_id in dependencies
+            if dependency_id in child_dag
+        }
+        sinks = tuple(child_id for child_id in child_dag if child_id not in depended_on)
+        return tuple(
+            terminal_id
+            for sink_id in sinks
+            for terminal_id in self._terminal_sinks(sink_id)
+        )
+
+    # ------------------------------------------------------------------
+    # Cross-tree role dedup tracking (outcome-aware)
     # ------------------------------------------------------------------
 
     def register_role(
         self, agent_id: UUID, role_prefix: str, parent_id: UUID | None = None
     ) -> None:
-        limits = self._limits.get(agent_id)
-        root_id = limits.root_id if limits else agent_id
-        self._used_roles.setdefault(root_id, set()).add(role_prefix)
         self._agent_role_prefix[agent_id] = role_prefix
+        root_id = self._root_for(agent_id)
+        self._current_role_generation[(root_id, role_prefix.casefold())] = agent_id
+        self._clear_role_outcome(root_id, role_prefix)
         if parent_id is not None:
             self._parent_children.setdefault(parent_id, set()).add(agent_id)
+
+    def mark_role_completed(self, agent_id: UUID) -> None:
+        """Record that the current generation of this role finished successfully."""
+        role = self._agent_role_prefix.get(agent_id)
+        if role is None:
+            return
+        root_id = self._root_for(agent_id)
+        if self._current_role_generation.get((root_id, role.casefold())) != agent_id:
+            return
+        self._discard_role(self._completed_roles.get(root_id), role)
+        self._completed_roles.setdefault(root_id, set()).add(role)
+        self._discard_role(self._failed_roles.get(root_id), role)
+
+    def mark_role_failed(self, agent_id: UUID) -> None:
+        """Record that this agent's role failed (may be reissued on re-decomposition)."""
+        role = self._agent_role_prefix.get(agent_id)
+        if role is None:
+            return
+        root_id = self._root_for(agent_id)
+        if self._current_role_generation.get((root_id, role.casefold())) != agent_id:
+            return
+        self._discard_role(self._completed_roles.get(root_id), role)
+        self._discard_role(self._failed_roles.get(root_id), role)
+        self._failed_roles.setdefault(root_id, set()).add(role)
+
+    def _clear_role_outcome(self, root_id: UUID, role_prefix: str) -> None:
+        self._discard_role(self._completed_roles.get(root_id), role_prefix)
+        self._discard_role(self._failed_roles.get(root_id), role_prefix)
+
+    @staticmethod
+    def _discard_role(role_prefixes: set[str] | None, role_prefix: str) -> None:
+        if role_prefixes is None:
+            return
+        normalized = role_prefix.casefold()
+        role_prefixes.difference_update(
+            existing for existing in tuple(role_prefixes) if existing.casefold() == normalized
+        )
 
     def get_sibling_role_prefixes(self, agent_id: UUID, parent_id: UUID) -> set[str]:
         """Get [Role-Name] prefixes of an agent's siblings (same parent)."""
@@ -84,6 +170,22 @@ class HierarchyLimitsRegistry:
         }
 
     def get_tree_role_prefixes(self, agent_id: UUID) -> set[str]:
+        """Get role prefixes used elsewhere in the same execution tree."""
+        root_id = self._root_for(agent_id)
+        return {
+            role_prefix
+            for other_id, role_prefix in self._agent_role_prefix.items()
+            if other_id != agent_id and self._root_for(other_id) == root_id
+        }
+
+    def get_completed_role_prefixes(self, agent_id: UUID) -> set[str]:
+        root_id = self._root_for(agent_id)
+        return set(self._completed_roles.get(root_id, set()))
+
+    def get_failed_role_prefixes(self, agent_id: UUID) -> set[str]:
+        root_id = self._root_for(agent_id)
+        return set(self._failed_roles.get(root_id, set()))
+
+    def _root_for(self, agent_id: UUID) -> UUID:
         limits = self._limits.get(agent_id)
-        root_id = limits.root_id if limits else agent_id
-        return set(self._used_roles.get(root_id, set()))
+        return limits.root_id if limits else agent_id

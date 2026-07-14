@@ -23,12 +23,20 @@ def _config() -> dict:
     }
 
 
-def _build_waiting_parent_with_children(count: int = 2) -> tuple[AgentSession, list]:
+def _build_waiting_parent_with_children(
+    count: int = 2,
+    criticalities: list[str] | None = None,
+) -> tuple[AgentSession, list]:
     parent = AgentSession.create(agent_id=uuid4(), role=AgentRole.BOSS, config=_config())
     parent.assign_task("Top task")
     spawned = parent.apply_subtasks_and_spawn_children(
         subtasks=[
-            Subtask(description=f"subtask-{i}", config=_config()) for i in range(count)
+            Subtask(
+                description=f"subtask-{i}",
+                config=_config(),
+                criticality=(criticalities or ["required"] * count)[i],
+            )
+            for i in range(count)
         ],
         child_role=AgentRole.PENDING.value,
         briefing=Briefing.simple("Top task"),
@@ -46,13 +54,13 @@ def test_child_failure_record_retains_context() -> None:
     parent.handle_child_failure(
         child_id=child_ids[0],
         reason="TimeoutError: exec timed out",
-        child_task="build the PoC",
+        child_task="build the artifact",
         digest="FAILURE: timeout\nLAST TOOL CALLS:\n[bash] make",
     )
 
     # Then: the record keeps every field
     record = parent.failed_children[child_ids[0]]
-    assert record.child_task == "build the PoC"
+    assert record.child_task == "build the artifact"
     assert record.reason == "TimeoutError: exec timed out"
     assert record.digest is not None and "LAST TOOL CALLS" in record.digest
 
@@ -128,7 +136,9 @@ def test_partial_completion_note_lists_failure_reasons() -> None:
     """Partial success must annotate results with each failed child's reason."""
 
     # Given: a parent in WAITING with two children
-    parent, child_ids = _build_waiting_parent_with_children()
+    parent, child_ids = _build_waiting_parent_with_children(
+        criticalities=["optional", "required"]
+    )
 
     # When: one child fails (multi-line reason) and the other completes
     parent.handle_child_failure(

@@ -11,12 +11,12 @@ def _session() -> ContainerSessionContext:
         image="tools:demo.issue-2024-0001",
         workspace_root=workspace_root,
         host_source_dir=workspace_root / "src",
-        host_testcase_dir=workspace_root / "testcase",
+        host_artifact_dir=workspace_root / "artifacts",
         host_work_dir=workspace_root / "src" / "demo",
         container_source_dir="/src",
-        container_testcase_dir="/testcase",
+        container_artifact_dir="/artifacts",
         container_working_directory="/src/demo",
-        helper_script=workspace_root / "secb-exec",
+        helper_script=workspace_root / "container-exec",
     )
 
 
@@ -55,19 +55,19 @@ def test_container_session_wraps_shell_commands() -> None:
 
 def test_container_session_prefix_mentions_shell_in_container_for_manual_shell() -> None:
     # E.10: the manual-shell branch must route the agent at the MCP
-    # ``shell_in_container`` tool, NOT at a host-side ``./secb-exec`` binary.
+    # ``shell_in_container`` tool, not at a host-side helper binary.
     session = _session()
 
     prompt = session.apply_task_prefix("Do the task", auto_shell=False)
 
     assert "/src/..." in prompt
-    assert "/testcase/..." in prompt
+    assert "/artifacts/..." in prompt
     assert "/work/..." in prompt
     assert str(session.host_source_dir) not in prompt
-    assert str(session.host_testcase_dir) not in prompt
+    assert str(session.host_artifact_dir) not in prompt
     assert str(session.host_work_root) not in prompt
     assert "shell_in_container" in prompt
-    assert "./secb-exec" not in prompt
+    assert "./container-exec" not in prompt
 
 
 def test_container_session_prefix_mentions_shell_in_container_for_auto_shell() -> None:
@@ -80,6 +80,6 @@ def test_container_session_prefix_mentions_shell_in_container_for_auto_shell() -
 
     assert "shell_in_container" in prompt
     assert str(session.host_source_dir) not in prompt
-    assert str(session.host_testcase_dir) not in prompt
+    assert str(session.host_artifact_dir) not in prompt
     assert str(session.host_work_root) not in prompt
-    assert "./secb-exec" not in prompt
+    assert "./container-exec" not in prompt

@@ -26,7 +26,7 @@ async def get_system_config(request: Request) -> SystemConfigSchema:
     - Application settings (timeouts, retries, thresholds)
 
     Note: Sensitive information (passwords, API keys) is NOT exposed.
-    Experiment model names are intentionally absent from base API config.
+    Provider model names are intentionally absent from the base API config.
     """
     settings = getattr(request.app.state, "settings", None)
     if not isinstance(settings, ApiSettings):

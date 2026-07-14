@@ -260,6 +260,28 @@ class GoogleADKAdapter(WorkerAdapterBase):
                     timeout=self.config.timeout_seconds,
                 )
             except TimeoutError:
+                # Price the usage streamed before the timeout via the same path
+                # the normal completion uses, so a timeout with real harvested
+                # tokens reports a non-zero cost. `... or None` keeps a
+                # zero-token timeout explicitly incomplete (usage_missing) rather
+                # than silently reporting $0.
+                cost_usd = get_model_pricing(self.config.model).calculate_cost(
+                    total_input_tokens, total_output_tokens
+                )
+                partial_cost = UsageBreakdown(
+                    prompt_tokens=total_input_tokens or None,
+                    completion_tokens=total_output_tokens or None,
+                    cost_usd=cost_usd or None,
+                )
+                yield emit_cost(
+                    sequencer,
+                    tool_name=self._get_tool_name(),
+                    duration_seconds=time() - started_at,
+                    model=self.config.model,
+                    breakdown=partial_cost,
+                    complete=False,
+                    termination_reason="timeout",
+                )
                 yield sequencer.failed(
                     f"Task timed out after {self.config.timeout_seconds} seconds"
                 )

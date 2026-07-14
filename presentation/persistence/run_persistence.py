@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from config._paths import get_repo_root
-from presentation.persistence.invocation_hash import compute_invocation_sha256
+from presentation.persistence.invocation_hash import (
+    compute_config_sha256,
+    compute_invocation_sha256,
+)
 
 
 if TYPE_CHECKING:
@@ -50,6 +53,10 @@ class _CostView(Protocol):
     def completion_tokens(self) -> int: ...
     @property
     def cost_by_model(self) -> dict[str, float]: ...
+    @property
+    def cost_incomplete(self) -> bool: ...
+    @property
+    def cost_completeness_rate(self) -> float: ...
 
 
 class _SummaryView(Protocol):
@@ -222,6 +229,7 @@ class RunPersistence:
         wall_started_at: datetime,
         wall_ended_at: datetime,
         summary: _SummaryView | None,
+        artifact_subdirectory: str | None = None,
         kind: str = "ours",
     ) -> Path:
         """Write `runs/<run_id>/run_manifest.json` with runtime-level fields.
@@ -246,13 +254,15 @@ class RunPersistence:
                 task=task,
                 domain_context_path=domain_context_path,
             ),
+            "config_hash": compute_config_sha256(settings),
+            "treatment_version": settings.orchestration.treatment_version,
             "models": {
                 "boss": settings.boss.model,
                 "manager": settings.manager.model,
                 "worker": settings.worker.model,
             },
             "summary_available": summary is not None,
-            "deliverables": _probe_deliverables(run_dir),
+            "deliverables": _probe_deliverables(run_dir, artifact_subdirectory),
         }
         # Only emit tokens / costs_by_model when a real summary was produced.
         # Zeros-as-fallback would be indistinguishable from a genuinely empty
@@ -260,6 +270,11 @@ class RunPersistence:
         if summary is not None:
             payload["tokens"] = _tokens_block(summary)
             payload["costs_by_model"] = _costs_by_model(summary)
+            cost = summary.cost
+            payload["cost_incomplete"] = bool(cost.cost_incomplete) if cost else False
+            payload["cost_completeness_rate"] = (
+                float(cost.cost_completeness_rate) if cost else 1.0
+            )
 
         _atomic_write_json(manifest_path, payload)
         return manifest_path
@@ -288,15 +303,18 @@ def _costs_by_model(summary: _SummaryView) -> dict[str, float]:
     return {str(model): float(amount) for model, amount in cost.cost_by_model.items()}
 
 
-def _probe_deliverables(run_dir: Path) -> dict[str, bool]:
-    """Report top-level files inside ``run_dir/testcase`` as {filename: True}.
+def _probe_deliverables(
+    run_dir: Path, artifact_subdirectory: str | None
+) -> dict[str, bool]:
+    """Report top-level files inside the plugin-owned artifact directory.
 
     Probing the filesystem keeps this layer domain-agnostic: whatever the
-    runtime happened to drop into ``testcase/`` is what gets recorded, with
-    no hardcoded SEC-bench filenames baked into presentation. A missing
-    directory yields an empty dict.
+    runtime placed there is recorded without hardcoded domain paths or
+    filenames. A missing directory yields an empty dict.
     """
-    testcase_dir = run_dir / "testcase"
-    if not testcase_dir.is_dir():
+    if artifact_subdirectory is None:
         return {}
-    return {child.name: True for child in testcase_dir.iterdir() if child.is_file()}
+    artifact_dir = run_dir / artifact_subdirectory
+    if not artifact_dir.is_dir():
+        return {}
+    return {child.name: True for child in artifact_dir.iterdir() if child.is_file()}
