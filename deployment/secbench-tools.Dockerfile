@@ -13,13 +13,15 @@
 #   2. Add registry entry in plugins/security/security_tool.py
 #   3. Optionally add prompt guidance in prompts/domains/secbench/tools.j2
 
-ARG BASE_IMAGE
+ARG BASE_IMAGE=hwiwonlee/secb.eval.x86_64.openjpeg.cve-2024-56827@sha256:d17f6788f2915d31b21c8af1b3fa9b68ee71447247a1f97d4cec1217a06b0c5a
 FROM ${BASE_IMAGE}
 
 USER root
 
-# Core analysis tools — pre-installed so workers skip apt-get at runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Core analysis tools — pre-installed so workers skip apt-get at runtime.
+# Touch package files because BuildKit otherwise omits byte-identical files
+# inherited from the reference base, making the layer incomplete on other bases.
+RUN apt-get update && apt-get install --reinstall -y --no-install-recommends \
     valgrind \
     gdb \
     cppcheck \
@@ -27,9 +29,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ltrace \
     cflow \
     jq \
-    && (apt-get install -y --no-install-recommends libasan5 libubsan1 2>/dev/null \
-        || apt-get install -y --no-install-recommends libasan6 libubsan1 2>/dev/null \
+    && (apt-get install --reinstall -y --no-install-recommends libasan5 libubsan1 2>/dev/null \
+        || apt-get install --reinstall -y --no-install-recommends libasan6 libubsan1 2>/dev/null \
         || echo "ASan runtime not available via apt — builder will handle") \
+    && for package in valgrind gdb cppcheck strace ltrace cflow jq libasan5 libasan6 libubsan1; do \
+        dpkg-query -L "$package" 2>/dev/null || true; \
+    done \
+        | while IFS= read -r path; do \
+            if [ -f "$path" ]; then touch "$path"; fi; \
+        done \
     && rm -rf /var/lib/apt/lists/*
 
 # KLEE — symbolic execution engine (optional, not packaged in all base images)
@@ -48,25 +56,33 @@ RUN valgrind --version && { klee --version 2>/dev/null || echo "KLEE not install
 # Claude Code CLI — required so the agent process itself runs inside this
 # container (Cell A flat-mode) instead of on the host. Mirrors the install
 # recipe in deployment/Dockerfile so both images use the same Node/npm path.
-ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION=2.1.173
+ARG NODEJS_VERSION=20.20.2-1nodesource1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y "nodejs=${NODEJS_VERSION}" \
     && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && node --version && claude --version
 
 # Security-tools MCP server — Cell A's claude-in-container needs the same
-# valgrind_run/klee_run MCP tools that B/C get on the host. Install Python +
-# the mcp package, then bake the server module under /opt/arise-mcp/. The
-# server detects in-container mode (no ARISE_SECBENCH_HELPER_SCRIPT) and
+# valgrind_run/klee_run MCP tools that B/C get on the host. SEC-bench bases
+# carry different /usr/local Python versions, so copy the pinned reference
+# base's Python prefix under /opt instead of creating a base-dependent venv.
+# The server detects in-container mode (no ARISE_SECBENCH_HELPER_SCRIPT) and
 # shells commands directly via bash -lc instead of docker exec.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
-    && python3 -m venv /opt/arise-mcp/venv \
-    && /opt/arise-mcp/venv/bin/pip install --no-cache-dir "mcp[server]>=1.9.0" \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ARG MCP_VERSION=1.27.2
+ARG ARISE_PYTHON_VERSION=3.12
+RUN test -x "/usr/local/bin/python${ARISE_PYTHON_VERSION}" \
+    && mkdir -p /opt/arise-python/bin /opt/arise-python/lib \
+    && cp "/usr/local/bin/python${ARISE_PYTHON_VERSION}" \
+        "/opt/arise-python/bin/python${ARISE_PYTHON_VERSION}" \
+    && cp -a "/usr/local/lib/python${ARISE_PYTHON_VERSION}" /opt/arise-python/lib/ \
+    && ln -s "python${ARISE_PYTHON_VERSION}" /opt/arise-python/bin/python3 \
+    && "/opt/arise-python/bin/python${ARISE_PYTHON_VERSION}" \
+        -m venv --copies /opt/arise-mcp/venv \
+    && /opt/arise-mcp/venv/bin/pip install --no-cache-dir "mcp[server]==${MCP_VERSION}" \
     && /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP"
 COPY plugins/security/mcp/__init__.py /opt/arise-mcp/plugins/security/mcp/__init__.py
 COPY plugins/security/mcp/security_tools_server.py /opt/arise-mcp/plugins/security/mcp/security_tools_server.py

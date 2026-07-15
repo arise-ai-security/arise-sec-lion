@@ -86,6 +86,7 @@ for input in "$@"; do
   else
     printf 'Building %s from %s\n' "$target_image" "$base_image"
     docker build \
+      --platform linux/amd64 \
       -f "$DOCKERFILE" \
       --build-arg "BASE_IMAGE=$base_image" \
       -t "$target_image" \
