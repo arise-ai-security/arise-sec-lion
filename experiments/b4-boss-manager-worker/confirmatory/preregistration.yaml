@@ -12,7 +12,7 @@ population:
   size: 19
   inclusion: all_launches_intention_to_treat
   development_enrollment_files:
-  - experiments/n1-openhands-linear/reports/enrollment.lock.yaml
+  - experiments/n1-secbench-full/reports/enrollment.lock.yaml
   - experiments/b4-boss-manager-worker/reports/enrollment.lock.yaml
 primary_endpoint:
   name: paired_combined_success_difference

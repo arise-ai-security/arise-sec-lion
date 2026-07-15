@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, run, checkpoint, and evict every pending task in one N1 shard."""
+"""Provision, run, checkpoint, and evict every pending task in one N1 shard."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from _n1_experiment import (
     load_run_records,
     parse_shard,
     pending_tasks,
+    postgres_exec_argv,
     postgres_connection,
     require_environment,
     require_program,
@@ -47,6 +48,17 @@ def _shard(value: str) -> Shard:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _instances(value: str) -> tuple[str, ...]:
+    instances = tuple(
+        instance.strip() for instance in value.split(",") if instance.strip()
+    )
+    if not instances:
+        raise argparse.ArgumentTypeError("must contain at least one instance ID")
+    if len(set(instances)) != len(instances):
+        raise argparse.ArgumentTypeError("instance IDs must be unique")
+    return instances
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -59,7 +71,7 @@ def _parser() -> argparse.ArgumentParser:
         "--parallel",
         type=_positive_int,
         default=2,
-        help="maximum simultaneous image builds and N1 runs (default: 2)",
+        help="maximum simultaneous image provisioning and N1 runs (default: 2)",
     )
     parser.add_argument(
         "--shard",
@@ -68,11 +80,35 @@ def _parser() -> argparse.ArgumentParser:
         help="disjoint host shard as INDEX/COUNT (default: 1/1)",
     )
     parser.add_argument(
+        "--instances",
+        "--tasks",
+        dest="instances",
+        type=_instances,
+        help="comma-separated SEC-bench instance IDs; run only this explicit subset",
+    )
+    parser.add_argument(
         "--keep-images",
         action="store_true",
         help="retain SEC-bench images instead of freeing disk after each wave",
     )
     return parser
+
+
+def _selected_tasks(
+    definition_tasks: tuple[str, ...],
+    *,
+    shard: Shard,
+    instances: tuple[str, ...] | None,
+) -> list[str]:
+    if instances is None:
+        return tasks_for_shard(definition_tasks, shard)
+    if shard.label != "1/1":
+        raise ExperimentError("--instances cannot be combined with --shard")
+    known = set(definition_tasks)
+    unknown = [instance for instance in instances if instance not in known]
+    if unknown:
+        raise ExperimentError("unknown SEC-bench instance(s): " + ", ".join(unknown))
+    return list(instances)
 
 
 def _run(argv: list[str], *, quiet: bool = False) -> int:
@@ -88,27 +124,22 @@ def _run(argv: list[str], *, quiet: bool = False) -> int:
 
 
 def _require_runtime() -> str:
-    require_environment(["OPENAI_API_KEY", "POSTGRES_PASSWORD"])
+    require_environment(["OPENAI_API_KEY"])
     docker = require_program("docker")
     require_program("bash")
-    pg_isready = require_program("pg_isready")
 
     if _run([docker, "info"], quiet=True) != 0:
         raise ExperimentError("Docker is not ready; run prepare_n1_experiment.py")
-    host, port, user, database = postgres_connection()
+    _, _, user, database = postgres_connection()
     if (
         _run(
-            [
-                pg_isready,
-                "--host",
-                host,
-                "--port",
-                port,
+            postgres_exec_argv(
+                "pg_isready",
                 "--username",
                 user,
                 "--dbname",
                 database,
-            ],
+            ),
             quiet=True,
         )
         != 0
@@ -117,7 +148,7 @@ def _require_runtime() -> str:
     return docker
 
 
-def _build_wave(tasks: list[str], fixtures: dict[str, Path], parallel: int) -> None:
+def _provision_wave(tasks: list[str], fixtures: dict[str, Path], parallel: int) -> None:
     fixture_paths = [str(fixtures[task]) for task in tasks]
     argv = [
         str(REPO_ROOT / "deployment" / "build-all-images.sh"),
@@ -127,7 +158,7 @@ def _build_wave(tasks: list[str], fixtures: dict[str, Path], parallel: int) -> N
         *fixture_paths,
     ]
     if _run(argv) != 0:
-        raise ExperimentError(f"image build failed for: {', '.join(tasks)}")
+        raise ExperimentError(f"image provisioning failed for: {', '.join(tasks)}")
 
 
 def _run_wave(tasks: list[str], parallel: int) -> int:
@@ -179,17 +210,21 @@ def _evict_wave(
 
 def _execute(args: argparse.Namespace) -> None:
     definition = load_definition()
-    docker = _require_runtime()
-    records = load_run_records(definition)
-    shard_tasks = tasks_for_shard(definition.tasks, args.shard)
-    remaining = pending_tasks(shard_tasks, records)
+    records = load_run_records(definition, event_backed_only=True)
+    selected_tasks = _selected_tasks(
+        definition.tasks,
+        shard=args.shard,
+        instances=args.instances,
+    )
+    remaining = pending_tasks(selected_tasks, records)
     total_batches = ceil(len(remaining) / args.batch_size) if remaining else 0
+    docker = _require_runtime() if remaining else ""
 
     logger.info(
         "[run] shard=%s tasks=%d completed=%d pending=%d parallel=%d",
         args.shard.label,
-        len(shard_tasks),
-        len(shard_tasks) - len(remaining),
+        len(selected_tasks),
+        len(selected_tasks) - len(remaining),
         len(remaining),
         args.parallel,
     )
@@ -198,12 +233,12 @@ def _execute(args: argparse.Namespace) -> None:
         waves = list(chunked(batch, args.parallel))
         for wave_number, wave in enumerate(waves, start=1):
             prefix = f"[batch {batch_number}/{total_batches} wave {wave_number}/{len(waves)}]"
-            logger.info("%s build %d task(s)", prefix, len(wave))
+            logger.info("%s provision %d task image(s)", prefix, len(wave))
             try:
-                _build_wave(wave, definition.fixtures, len(wave))
+                _provision_wave(wave, definition.fixtures, len(wave))
                 logger.info("%s run %d task(s)", prefix, len(wave))
                 run_returncode = _run_wave(wave, len(wave))
-                current_records = load_run_records(definition)
+                current_records = load_run_records(definition, event_backed_only=True)
                 missing = pending_tasks(wave, current_records)
                 if missing:
                     raise ExperimentError(
@@ -216,32 +251,34 @@ def _execute(args: argparse.Namespace) -> None:
                     logger.info("%s evict images and build cache", prefix)
                     _evict_wave(docker, wave, definition.base_images)
 
-        current_records = load_run_records(definition)
-        completed = len(shard_tasks) - len(pending_tasks(shard_tasks, current_records))
+        current_records = load_run_records(definition, event_backed_only=True)
+        completed = len(selected_tasks) - len(pending_tasks(selected_tasks, current_records))
         logger.info(
             "[batch %d/%d] checkpoint: %d/%d shard tasks complete",
             batch_number,
             total_batches,
             completed,
-            len(shard_tasks),
+            len(selected_tasks),
         )
 
-    final_records = load_run_records(definition)
-    shard_record_by_task = {
-        record.task: record for record in final_records if record.task in shard_tasks
+    final_records = (
+        load_run_records(definition, event_backed_only=True) if remaining else records
+    )
+    record_by_task = {
+        record.task: record for record in final_records if record.task in selected_tasks
     }
-    incomplete = [task for task in shard_tasks if task not in shard_record_by_task]
+    incomplete = [task for task in selected_tasks if task not in record_by_task]
     if incomplete:
-        raise ExperimentError("shard is incomplete: " + ", ".join(incomplete))
+        raise ExperimentError("selected run scope is incomplete: " + ", ".join(incomplete))
     succeeded = sum(
-        record.exit_status == "success" for record in shard_record_by_task.values()
+        record.exit_status == "success" for record in record_by_task.values()
     )
     logger.info(
         "done: shard=%s completed=%d succeeded=%d failed=%d",
         args.shard.label,
-        len(shard_tasks),
+        len(selected_tasks),
         succeeded,
-        len(shard_tasks) - succeeded,
+        len(selected_tasks) - succeeded,
     )
 
 

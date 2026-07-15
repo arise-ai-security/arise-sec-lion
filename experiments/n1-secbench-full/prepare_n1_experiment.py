@@ -21,8 +21,8 @@ from _n1_experiment import (
     experiment_lock,
     load_definition,
     load_run_records,
+    postgres_exec_argv,
     postgres_connection,
-    require_environment,
     require_program,
     subprocess_environment,
 )
@@ -44,9 +44,6 @@ REQUIRED_PROGRAMS = (
     "grep",
     "gzip",
     "mktemp",
-    "pg_dump",
-    "pg_isready",
-    "psql",
     "sed",
     "tr",
     "uv",
@@ -103,7 +100,10 @@ def _check_repository(definition: StudyDefinition) -> str:
         label="cannot inspect Git status",
     )
     if dirty.stdout.strip():
-        raise ExperimentError("commit or restore tracked changes before running N1")
+        logger.warning(
+            "prerequisite warning: tracked changes are present; commit them before "
+            "collecting authoritative experiment results"
+        )
 
     sha = _checked_run([git, "rev-parse", "HEAD"], label="cannot read Git commit")
     Settings.from_yaml(definition.config_path)
@@ -165,19 +165,7 @@ def _compose_file() -> Path:
     return REPO_ROOT / "deployment" / "docker-compose.yml"
 
 
-def _ensure_compose_env_file() -> None:
-    env_file = REPO_ROOT / "deployment" / ".env"
-    if not env_file.exists():
-        env_file.touch(mode=0o600)
-
-
 def _start_database(docker: str) -> None:
-    host, _, _, _ = postgres_connection()
-    if host not in {"localhost", "127.0.0.1"}:
-        logger.info("[prepare] use external PostgreSQL host %s", host)
-        return
-
-    _ensure_compose_env_file()
     _checked_run(
         [docker, "compose", "-f", str(_compose_file()), "config", "--quiet"],
         label="invalid Docker Compose configuration",
@@ -198,42 +186,33 @@ def _start_database(docker: str) -> None:
     )
 
 
-def _psql_argv(psql: str) -> list[str]:
-    host, port, user, database = postgres_connection()
-    return [
-        psql,
-        "--host",
-        host,
-        "--port",
-        port,
+def _psql_argv() -> list[str]:
+    _, _, user, database = postgres_connection()
+    return postgres_exec_argv(
+        "psql",
         "--username",
         user,
         "--dbname",
         database,
         "--set",
         "ON_ERROR_STOP=1",
-    ]
+    )
 
 
 def _wait_for_database() -> None:
-    pg_isready = require_program("pg_isready")
-    host, port, user, database = postgres_connection()
-    argv = [
-        pg_isready,
-        "--host",
-        host,
-        "--port",
-        port,
+    _, _, user, database = postgres_connection()
+    argv = postgres_exec_argv(
+        "pg_isready",
         "--username",
         user,
         "--dbname",
         database,
-    ]
+    )
     for _ in range(30):
         if _run(argv, env=subprocess_environment()).returncode == 0:
             return
         time.sleep(2)
-    raise ExperimentError(f"PostgreSQL is not ready at {host}:{port}/{database}")
+    raise ExperimentError(f"PostgreSQL is not ready in postgres-main/{database}")
 
 
 def _database_status_query() -> str:
@@ -274,12 +253,11 @@ def _parse_database_status(stdout: str) -> int:
 
 
 def _initialize_database() -> int:
-    psql = require_program("psql")
-    schema = REPO_ROOT / "infrastructure" / "sql" / "create_events_table.sql"
-    _checked_run([*_psql_argv(psql), "--file", str(schema)], label="database initialization failed")
+    schema = "/docker-entrypoint-initdb.d/01-schema.sql"
+    _checked_run([*_psql_argv(), "--file", schema], label="database initialization failed")
     result = _checked_run(
         [
-            *_psql_argv(psql),
+            *_psql_argv(),
             "--tuples-only",
             "--no-align",
             "--field-separator",
@@ -295,14 +273,15 @@ def _initialize_database() -> int:
 def _verify_run_events(records: list[RunRecord]) -> None:
     if not records:
         return
-    psql = require_program("psql")
     values = ",".join(f"('{record.run_id}'::uuid)" for record in records)
     query = (
         "WITH expected(aggregate_id) AS (VALUES "
-        f"{values}) SELECT COUNT(*) FROM expected JOIN events USING (aggregate_id);"
+        f"{values}) SELECT COUNT(*) FROM expected "
+        "WHERE EXISTS (SELECT 1 FROM events "
+        "WHERE events.aggregate_id = expected.aggregate_id);"
     )
     result = _checked_run(
-        [*_psql_argv(psql), "--tuples-only", "--no-align", "--command", query],
+        [*_psql_argv(), "--tuples-only", "--no-align", "--command", query],
         label="cannot verify resumable run events",
     )
     if int(result.stdout.strip()) != len(records):
@@ -317,7 +296,6 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("[prepare 1/6] Validate the committed 300-task experiment")
             definition = load_definition()
             logger.info("[prepare 2/6] Check keys, branch, config, and Python dependencies")
-            require_environment(["OPENAI_API_KEY", "POSTGRES_PASSWORD"])
             git_sha = _check_repository(definition)
             _check_python_modules()
             logger.info("[prepare 3/6] Check host tools, writable paths, Docker, and disk")
@@ -328,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("[prepare 5/6] Initialize and verify the event-store schema")
             event_count = _initialize_database()
             logger.info("[prepare 6/6] Validate resumable run and event state")
-            records = load_run_records(definition)
+            records = load_run_records(definition, event_backed_only=True)
             _verify_run_events(records)
     except (ExperimentError, OSError, subprocess.SubprocessError, ValueError) as exc:
         logger.error("prepare failed: %s", exc)

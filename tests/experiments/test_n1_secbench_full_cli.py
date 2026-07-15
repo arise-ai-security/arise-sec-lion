@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -18,6 +22,15 @@ import _n1_experiment as n1  # noqa: E402
 import export_data  # noqa: E402
 import prepare_n1_experiment as prepare  # noqa: E402
 import run_batch  # noqa: E402
+
+
+def _load_script_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _definition(tasks: tuple[str, ...]) -> n1.StudyDefinition:
@@ -55,6 +68,26 @@ def test_committed_definition_is_the_full_eval_split() -> None:
     assert set(definition.base_images) == set(tasks)
 
 
+def test_n1_control_config_rejects_host_procedural_dispatch() -> None:
+    # Given: an N1-like flat OpenHands configuration with Host procedures enabled.
+    config = {
+        "orchestration": {
+            "mode": "flat",
+            "procedural_dispatch": True,
+            "skip_judge": True,
+        },
+        "worker": {
+            "tool": "openhands",
+            "tool_params": {"openhands": {"enable_subagents": False}},
+        },
+        "output": {"directory": "./runs"},
+    }
+
+    # When + Then: the study-specific loader contract fails closed.
+    with pytest.raises(n1.ExperimentDefinitionError, match="procedural dispatch"):
+        n1._validate_n1_control_config(config)
+
+
 def test_sharding_and_resume_are_deterministic(tmp_path: Path) -> None:
     # Given: ten tasks, three host shards, and one completed task.
     tasks = tuple(f"task-{index}" for index in range(10))
@@ -73,6 +106,19 @@ def test_sharding_and_resume_are_deterministic(tmp_path: Path) -> None:
     assert first_plan == second_plan == ["task-1", "task-7"]
 
 
+def test_postgres_clients_run_inside_the_single_database_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: Docker is available on the host.
+    monkeypatch.setattr(n1, "require_program", lambda name: f"/usr/bin/{name}")
+
+    # When: a PostgreSQL client command is assembled.
+    argv = n1.postgres_exec_argv("psql", "--version")
+
+    # Then: the client runs in postgres-main, not from a Homebrew installation.
+    assert argv == ["/usr/bin/docker", "exec", "postgres-main", "psql", "--version"]
+
+
 def test_run_defaults_bound_disk_and_enable_concurrency() -> None:
     # Given: the operator supplies no performance overrides.
     args = run_batch._parser().parse_args([])
@@ -81,17 +127,82 @@ def test_run_defaults_bound_disk_and_enable_concurrency() -> None:
     assert args.batch_size == 30
     assert args.parallel == 2
     assert args.shard.label == "1/1"
+    assert args.instances is None
     assert args.keep_images is False
 
 
-def test_duplicate_task_manifests_fail_closed(tmp_path: Path) -> None:
-    # Given: two run manifests claiming the same N1 task and replicate.
+def test_explicit_instances_limit_the_batch_scope() -> None:
+    # Given: the operator requests the shared two-instance validation pair.
+    tasks = (
+        "other.instance",
+        "openexr.cve-2020-16589",
+        "faad2.cve-2018-20196",
+    )
+    instances = run_batch._instances(
+        "openexr.cve-2020-16589,faad2.cve-2018-20196"
+    )
+
+    # When: the batch scope is selected.
+    selected = run_batch._selected_tasks(
+        tasks,
+        shard=n1.parse_shard("1/1"),
+        instances=instances,
+    )
+
+    # Then: only those two instances are eligible to build or launch.
+    assert selected == [
+        "openexr.cve-2020-16589",
+        "faad2.cve-2018-20196",
+    ]
+
+
+def test_explicit_instances_reject_unknown_or_sharded_scope() -> None:
+    tasks = ("known.instance",)
+
+    with pytest.raises(n1.ExperimentError, match="unknown SEC-bench"):
+        run_batch._selected_tasks(
+            tasks,
+            shard=n1.parse_shard("1/1"),
+            instances=("unknown.instance",),
+        )
+
+    with pytest.raises(n1.ExperimentError, match="cannot be combined"):
+        run_batch._selected_tasks(
+            tasks,
+            shard=n1.parse_shard("1/2"),
+            instances=("known.instance",),
+        )
+
+
+def test_completed_explicit_scope_does_not_require_provider_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: the requested instance already has an authoritative run record.
+    run_dir = tmp_path / "run-a"
+    run_dir.mkdir()
+    definition = _definition(("task-a",))
+    record = _record("task-a", "run-a", run_dir)
+    monkeypatch.setattr(run_batch, "load_definition", lambda: definition)
+    monkeypatch.setattr(run_batch, "load_run_records", lambda *_args, **_kwargs: [record])
+    monkeypatch.setattr(
+        run_batch,
+        "_require_runtime",
+        lambda: pytest.fail("completed resume must not require provider runtime"),
+    )
+    args = run_batch._parser().parse_args(["--instances", "task-a"])
+
+    # When/Then: resume completes without an OpenAI key, Docker, or a new launch.
+    run_batch._execute(args)
+
+
+def test_duplicate_task_manifests_select_earliest_launch(tmp_path: Path) -> None:
+    # Given: historical validation runs claiming the same N1 task and replicate.
     runs_root = tmp_path / "runs"
     run_ids = (
         "00000000-0000-0000-0000-000000000001",
         "00000000-0000-0000-0000-000000000002",
     )
-    for run_id in run_ids:
+    for index, run_id in enumerate(run_ids):
         run_dir = runs_root / run_id
         run_dir.mkdir(parents=True)
         manifest = {
@@ -99,14 +210,58 @@ def test_duplicate_task_manifests_fail_closed(tmp_path: Path) -> None:
             "exit_status": "success",
             "replicate": 0,
             "run_id": run_id,
+            "started_at": f"2026-07-15T00:00:0{index}Z",
             "study_id": n1.STUDY_ID,
             "task": "task-a",
         }
         (run_dir / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    # When/Then: resume refuses ambiguous state instead of choosing a run.
-    with pytest.raises(n1.ExperimentStateError, match="duplicate runs"):
-        n1.load_run_records(_definition(("task-a",)), repo_root=tmp_path)
+    # When: resume canonicalizes the task according to first-launch semantics.
+    records = n1.load_run_records(_definition(("task-a",)), repo_root=tmp_path)
+
+    # Then: preparation remains idempotent without deleting either run directory.
+    assert [record.run_id for record in records] == [run_ids[0]]
+    assert all((runs_root / run_id).is_dir() for run_id in run_ids)
+
+
+def test_event_backed_loading_ignores_filesystem_only_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: two manifests, but only the later run exists in the event store.
+    runs_root = tmp_path / "runs"
+    run_ids = (
+        "00000000-0000-0000-0000-000000000011",
+        "00000000-0000-0000-0000-000000000012",
+    )
+    for index, run_id in enumerate(run_ids):
+        run_dir = runs_root / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(
+                {
+                    "cell": n1.CELL_ID,
+                    "exit_status": "success",
+                    "replicate": 0,
+                    "run_id": run_id,
+                    "started_at": f"2026-07-15T00:00:0{index}Z",
+                    "study_id": n1.STUDY_ID,
+                    "task": "task-a",
+                }
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(n1, "_event_backed_run_ids", lambda: {run_ids[1]})
+
+    # When: authoritative records are loaded.
+    records = n1.load_run_records(
+        _definition(("task-a",)),
+        repo_root=tmp_path,
+        event_backed_only=True,
+    )
+
+    # Then: resume selects the event-backed run and preserves both directories.
+    assert [record.run_id for record in records] == [run_ids[1]]
+    assert all((runs_root / run_id).is_dir() for run_id in run_ids)
 
 
 def test_prepare_checks_full_toolchain_and_database_contract() -> None:
@@ -118,13 +273,51 @@ def test_prepare_checks_full_toolchain_and_database_contract() -> None:
     )
 
     # When/Then: all run/export tools are checked and a valid schema reports its event count.
-    assert {"docker", "uv", "psql", "pg_dump", "xargs"} <= required_tools
+    assert {"docker", "uv", "xargs"} <= required_tools
+    assert {"psql", "pg_dump", "pg_isready"}.isdisjoint(required_tools)
     assert prepare._parse_database_status(valid_status) == 12
 
     # And: a database without the OCC uniqueness invariant is rejected.
     invalid_status = valid_status[:-1] + "f"
     with pytest.raises(n1.ExperimentError, match="UNIQUE"):
         prepare._parse_database_status(invalid_status)
+
+
+def test_prepare_event_coverage_counts_runs_not_event_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: one run whose aggregate can have many event rows.
+    run_dir = tmp_path / "run-a"
+    run_dir.mkdir()
+    records = [
+        _record(
+            "task-a",
+            "00000000-0000-0000-0000-000000000021",
+            run_dir,
+        )
+    ]
+    captured: list[list[str]] = []
+
+    def checked(
+        argv: list[str], *, label: str
+    ) -> subprocess.CompletedProcess[str]:
+        captured.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="1\n", stderr="")
+
+    monkeypatch.setattr(
+        prepare,
+        "postgres_exec_argv",
+        lambda program, *args: ["docker", "exec", "postgres-main", program, *args],
+    )
+    monkeypatch.setattr(prepare, "_checked_run", checked)
+
+    # When: preparation verifies event coverage.
+    prepare._verify_run_events(records)
+
+    # Then: SQL counts covered expected aggregates, not joined event rows.
+    query = captured[0][-1]
+    assert "WHERE EXISTS" in query
+    assert "JOIN events" not in query
 
 
 def test_run_archive_replaces_previous_export(tmp_path: Path) -> None:
@@ -145,9 +338,12 @@ def test_run_archive_replaces_previous_export(tmp_path: Path) -> None:
     assert names.count("runs/run-a/artifact.txt") == 1
 
 
-def test_n1_commands_do_not_load_persisted_secrets() -> None:
-    # Given: the three operator-facing N1 commands.
+def test_n1_commands_do_not_use_external_secret_storage() -> None:
+    # Given: every operator-facing N1 command.
     paths = [
+        N1_DIR / "setup.py",
+        N1_DIR / "run.py",
+        N1_DIR / "export.py",
         N1_DIR / "prepare_n1_experiment.py",
         N1_DIR / "run_batch.py",
         N1_DIR / "export_data.py",
@@ -156,7 +352,278 @@ def test_n1_commands_do_not_load_persisted_secrets() -> None:
     # When: their credential behavior is inspected.
     combined = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
 
-    # Then: they accept process environment values and never invoke a secret store.
+    # Then: the handoff does not depend on an external secret store or deployment env.
     assert "bitwarden" not in combined
     assert "bw " not in combined
     assert "source deployment/.env" not in combined
+
+
+def test_setup_keeps_openai_key_in_ignored_study_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: an N1-local environment and a process-provided key during setup.
+    setup = _load_script_module("n1_handoff_setup", N1_DIR / "setup.py")
+    study_env = tmp_path / "n1" / ".env"
+    example_env = tmp_path / "n1" / ".env.example"
+    compose_env = tmp_path / "deployment" / ".env"
+    study_env.parent.mkdir()
+    compose_env.parent.mkdir()
+    example_env.write_text(
+        "OPENAI_API_KEY=\n"
+        "HOST_PROJECT_ROOT=\n"
+        "POSTGRES_HOST=127.0.0.1\n"
+        "POSTGRES_PORT=55432\n"
+        "POSTGRES_USER=arise\n"
+        "POSTGRES_DB=arise_events\n",
+        encoding="utf-8",
+    )
+    compose_env.write_text(
+        "COMPOSE_ONLY=1\nOPENAI_API_KEY=remove-me\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(setup, "N1_ENV", study_env)
+    monkeypatch.setattr(setup, "N1_ENV_EXAMPLE", example_env)
+    monkeypatch.setattr(setup, "COMPOSE_ENV", compose_env)
+    monkeypatch.setattr(setup, "_database_port", lambda _docker: "6000")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-only")
+
+    # When: setup creates the private env from the committed template and stores the key.
+    setup._write_environment("unused")
+    setup._ensure_openai_key()
+
+    # Then: only the private study env receives the key.
+    assert study_env.stat().st_mode & 0o777 == 0o600
+    study_text = study_env.read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=sk-test-only" in study_text
+    assert f"HOST_PROJECT_ROOT={setup.ROOT_DIR}" in study_text
+    assert "POSTGRES_PORT=6000" in study_text
+    compose_text = compose_env.read_text(encoding="utf-8")
+    assert "COMPOSE_ONLY=1" in compose_text
+    assert "OPENAI_API_KEY" not in compose_text
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--quiet", "experiments/n1-secbench-full/.env"],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    assert ignored.returncode == 0
+    example_ignored = subprocess.run(
+        ["git", "check-ignore", "--quiet", "experiments/n1-secbench-full/.env.example"],
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    assert example_ignored.returncode == 1
+
+
+def test_run_loads_openai_key_only_from_study_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: an N1-local environment containing the one permitted persisted key.
+    runner = _load_script_module("n1_handoff_run", N1_DIR / "run.py")
+    study_env = tmp_path / ".env"
+    study_env.write_text(
+        "POSTGRES_HOST=127.0.0.1\nOPENAI_API_KEY=sk-test-only\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "ENV_FILE", study_env)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # When: the handoff runner loads its environment.
+    runner._load_environment()
+    runner._load_openai_key()
+
+    # Then: it receives the study key but still rejects every other persisted secret.
+    assert os.environ["OPENAI_API_KEY"] == "sk-test-only"
+    study_env.write_text("ANTHROPIC_API_KEY=not-allowed\n", encoding="utf-8")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(runner.RunError, match="only N1 host settings"):
+        runner._load_environment()
+
+
+def test_handoff_readme_exposes_setup_model_run_and_export() -> None:
+    # Given: the colleague-facing handoff document.
+    readme = (N1_DIR / "README.md").read_text(encoding="utf-8")
+    lowered = readme.lower()
+
+    # When: its public workflow is inspected.
+    headings = [line for line in readme.splitlines() if line.startswith("## ")]
+
+    # Then: it exposes the four operator actions and no image mechanics.
+    assert headings == [
+        "## 1. Environment and OpenAI key",
+        "## 2. Change the model (optional)",
+        "## 3. Run",
+        "## 4. Export",
+    ]
+    assert "experiments/n1-secbench-full/setup.py" in readme
+    assert "experiments/n1-secbench-full/.env" in readme
+    assert ".env.example" in readme
+    assert "asks once" in readme
+    assert "study-only" in lowered
+    assert "worker.model" in readme
+    assert "experiments/n1-secbench-full/run.py" in readme
+    assert "experiments/n1-secbench-full/export.py" in readme
+    for hidden_detail in (
+        "docker",
+        "cheshire0814",
+        "build-all-images",
+        "docker pull",
+        "docker push",
+    ):
+        assert hidden_detail not in lowered
+
+
+def test_run_and_export_wrappers_have_separate_responsibilities() -> None:
+    # Given: the separate run and export commands exposed by the handoff README.
+    wrapper = (N1_DIR / "run.py").read_text(encoding="utf-8")
+    exporter = (N1_DIR / "export.py").read_text(encoding="utf-8")
+
+    # When/Then: run prepares and executes, while export only delegates to export_data.
+    prepare_at = wrapper.index("prepare_n1_experiment.py")
+    run_at = wrapper.index("run_batch.py")
+    assert prepare_at < run_at
+    assert "export_data.py" not in wrapper
+    assert "export_data.py" in exporter
+    assert "prepare_n1_experiment.py" not in exporter
+    assert "run_batch.py" not in exporter
+    assert "docker" not in wrapper.lower()
+    assert "docker" not in exporter.lower()
+
+
+def test_bulk_image_provisioning_prefers_registry_cache(tmp_path: Path) -> None:
+    # Given: no local image and a registry cache hit.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+case "$1:$2" in
+  image:inspect) exit 1 ;;
+  image:rm) exit 0 ;;
+  pull:*|tag:*) exit 0 ;;
+  *) exit 1 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fixture = (
+        REPO_ROOT
+        / "plugins/security/tests/fixtures/gpac.cve-2024-0322.json"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "DOCKER_LOG": str(docker_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TOOLS_IMAGE_REGISTRY": "cache.example",
+        }
+    )
+
+    # When: the hidden bulk provisioner handles that fixture.
+    completed = subprocess.run(
+        ["bash", "deployment/build-all-images.sh", str(fixture)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then: it pulls and aliases the cache without invoking a local image build.
+    commands = docker_log.read_text(encoding="utf-8")
+    assert completed.returncode == 0, completed.stderr
+    assert (
+        "pull --platform linux/amd64 "
+        "cache.example/secb-tools:gpac.cve-2024-0322-patch"
+    ) in commands
+    assert (
+        "tag cache.example/secb-tools:gpac.cve-2024-0322-patch "
+        "secb-tools:gpac.cve-2024-0322-patch"
+    ) in commands
+    assert not any(line.startswith(("build ", "buildx ")) for line in commands.splitlines())
+    assert "Cached:  1" in completed.stderr
+    assert "Built:   0" in completed.stderr
+
+
+def test_bulk_image_provisioning_accepts_verified_mislabeled_cache(
+    tmp_path: Path,
+) -> None:
+    # Given: the first cache generation's OCI index says arm64, but its image is amd64.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    digest = "sha256:" + "a" * 64
+    manifest = json.dumps(
+        {
+            "manifests": [
+                {
+                    "digest": digest,
+                    "platform": {"os": "linux", "architecture": "arm64"},
+                }
+            ]
+        },
+        separators=(",", ":"),
+    )
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+if [ "$1:$2:$3" = "image:inspect:secb-tools:gpac.cve-2024-0322-patch" ]; then
+  exit 1
+fi
+if [ "$1:$2:$3" = "image:inspect:--format" ]; then
+  printf 'amd64\\n'
+  exit 0
+fi
+if [ "$1:$2" = "pull:--platform" ]; then
+  exit 1
+fi
+if [ "$1:$2" = "manifest:inspect" ]; then
+  printf '%s\\n' '{manifest}'
+  exit 0
+fi
+case "$1" in
+  pull|tag) exit 0 ;;
+esac
+if [ "$1:$2" = "image:rm" ]; then
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fixture = REPO_ROOT / "plugins/security/tests/fixtures/gpac.cve-2024-0322.json"
+    env = os.environ.copy()
+    env.update(
+        {
+            "DOCKER_LOG": str(docker_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TOOLS_IMAGE_REGISTRY": "cache.example",
+        }
+    )
+
+    # When: the hidden provisioner handles the malformed registry index.
+    completed = subprocess.run(
+        ["bash", "deployment/build-all-images.sh", str(fixture)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then: it selects the child manifest only after verifying its amd64 config.
+    commands = docker_log.read_text(encoding="utf-8")
+    child = f"cache.example/secb-tools@{digest}"
+    assert completed.returncode == 0, completed.stderr
+    assert "manifest inspect cache.example/secb-tools:gpac.cve-2024-0322-patch" in commands
+    assert f"pull {child}" in commands
+    assert f"image inspect --format {{{{.Architecture}}}} {child}" in commands
+    assert f"tag {child} secb-tools:gpac.cve-2024-0322-patch" in commands
+    assert "Cached:  1" in completed.stderr
+    assert "Built:   0" in completed.stderr

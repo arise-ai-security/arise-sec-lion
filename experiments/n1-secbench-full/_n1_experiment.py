@@ -5,8 +5,10 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator, Sequence
@@ -31,8 +33,10 @@ from experiments.shared.scripts.load_runs import load_runs  # noqa: E402
 STUDY_ID = "n1-secbench-full"
 CELL_ID = "N1"
 EXPECTED_TASK_COUNT = 300
+POSTGRES_CONTAINER = "postgres-main"
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class ExperimentError(RuntimeError):
@@ -89,6 +93,23 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise ExperimentDefinitionError(message)
+
+
+def _validate_n1_control_config(config: dict[str, Any]) -> None:
+    """Require the full-run cell to remain an unassisted OpenHands control."""
+    orchestration = config.get("orchestration") or {}
+    worker = config.get("worker") or {}
+    output = config.get("output") or {}
+    openhands = ((worker.get("tool_params") or {}).get("openhands") or {})
+    _require(orchestration.get("mode") == "flat", "N1 orchestration.mode must be flat")
+    _require(
+        orchestration.get("procedural_dispatch") is False,
+        "N1 Host procedural dispatch must be disabled explicitly",
+    )
+    _require(orchestration.get("skip_judge") is True, "N1 must skip the LLM judge")
+    _require(worker.get("tool") == "openhands", "N1 worker tool must be OpenHands")
+    _require(openhands.get("enable_subagents") is False, "N1 OpenHands subagents must be disabled")
+    _require(output.get("directory") == "./runs", "N1 output.directory must be ./runs")
 
 
 def _base_image(fixture: dict[str, Any], *, fixture_path: Path) -> str:
@@ -170,15 +191,7 @@ def load_definition(*, repo_root: Path = REPO_ROOT) -> StudyDefinition:
     except (FileNotFoundError, OSError, ValueError, yaml.YAMLError) as exc:
         raise ExperimentDefinitionError(f"cannot resolve {config_path}: {exc}") from exc
 
-    orchestration = config.get("orchestration") or {}
-    worker = config.get("worker") or {}
-    output = config.get("output") or {}
-    openhands = ((worker.get("tool_params") or {}).get("openhands") or {})
-    _require(orchestration.get("mode") == "flat", "N1 orchestration.mode must be flat")
-    _require(orchestration.get("skip_judge") is True, "N1 must skip the LLM judge")
-    _require(worker.get("tool") == "openhands", "N1 worker tool must be OpenHands")
-    _require(openhands.get("enable_subagents") is False, "N1 OpenHands subagents must be disabled")
-    _require(output.get("directory") == "./runs", "N1 output.directory must be ./runs")
+    _validate_n1_control_config(config)
 
     return StudyDefinition(
         tasks=tasks,
@@ -194,16 +207,17 @@ def load_run_records(
     definition: StudyDefinition,
     *,
     repo_root: Path = REPO_ROOT,
+    event_backed_only: bool = False,
 ) -> list[RunRecord]:
     """Load N1 manifests and reject state that cannot be resumed unambiguously."""
+    event_backed_ids = _event_backed_run_ids() if event_backed_only else None
     rows = load_runs(
         study_id=STUDY_ID,
         cells=[CELL_ID],
         pool_roots=[repo_root / "runs"],
     )
     known_tasks = set(definition.tasks)
-    records: list[RunRecord] = []
-    seen_tasks: dict[str, str] = {}
+    selected_by_task: dict[str, tuple[tuple[str, str], RunRecord]] = {}
     for row in rows:
         run_id = row.get("run_id")
         task = row.get("task")
@@ -215,30 +229,71 @@ def load_run_records(
             UUID(run_id)
         except ValueError as exc:
             raise ExperimentStateError(f"N1 run has invalid UUID {run_id!r}") from exc
+        if event_backed_ids is not None and run_id not in event_backed_ids:
+            logger.warning(
+                "ignoring filesystem-only run %s for task %s; no PostgreSQL events exist",
+                run_id,
+                task,
+            )
+            continue
         if task not in known_tasks:
             raise ExperimentStateError(f"N1 run {run_id} has unknown task {task!r}")
         if replicate != 0:
             raise ExperimentStateError(f"N1 run {run_id} has replicate {replicate}; expected 0")
         if not isinstance(exit_status, str):
             raise ExperimentStateError(f"N1 run {run_id} has no exit_status")
-        previous = seen_tasks.get(task)
-        if previous is not None:
-            raise ExperimentStateError(f"task {task!r} has duplicate runs {previous} and {run_id}")
         run_dir = repo_root / "runs" / run_id
         if not run_dir.is_dir():
             raise ExperimentStateError(f"run directory is missing for {run_id}")
-        seen_tasks[task] = run_id
-        records.append(
-            RunRecord(
-                run_id=run_id,
-                task=task,
-                exit_status=exit_status,
-                replicate=replicate,
-                run_dir=run_dir,
-            )
+        record = RunRecord(
+            run_id=run_id,
+            task=task,
+            exit_status=exit_status,
+            replicate=replicate,
+            run_dir=run_dir,
         )
+        started_at = row.get("started_at")
+        selection_key = (started_at if isinstance(started_at, str) else "", run_id)
+        previous = selected_by_task.get(task)
+        if previous is None or selection_key < previous[0]:
+            selected_by_task[task] = (selection_key, record)
+        if previous is not None:
+            canonical = selected_by_task[task][1].run_id
+            logger.warning(
+                "task %s has multiple historical runs; using earliest run %s",
+                task,
+                canonical,
+            )
     task_order = {task: index for index, task in enumerate(definition.tasks)}
+    records = [item[1] for item in selected_by_task.values()]
     return sorted(records, key=lambda record: task_order[record.task])
+
+
+def _event_backed_run_ids() -> set[str]:
+    """Return aggregate IDs present in the authoritative PostgreSQL event store."""
+    _, _, user, database = postgres_connection()
+    result = subprocess.run(  # noqa: S603
+        postgres_exec_argv(
+            "psql",
+            "--username",
+            user,
+            "--dbname",
+            database,
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            "SELECT DISTINCT aggregate_id::text FROM events;",
+        ),
+        cwd=REPO_ROOT,
+        env=subprocess_environment(),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise ExperimentStateError(f"cannot read PostgreSQL event IDs: {detail}")
+    return {line for line in result.stdout.splitlines() if line}
 
 
 def parse_shard(value: str) -> Shard:
@@ -278,9 +333,14 @@ def require_environment(names: Sequence[str]) -> None:
 
 def require_program(name: str) -> str:
     path = shutil.which(name)
-    if path is None:
-        raise ExperimentStateError(f"required program is not installed: {name}")
-    return path
+    if path is not None:
+        return path
+    raise ExperimentStateError(f"required program is not installed: {name}")
+
+
+def postgres_exec_argv(program: str, *args: str) -> list[str]:
+    """Build a command that runs a PostgreSQL client inside postgres-main."""
+    return [require_program("docker"), "exec", POSTGRES_CONTAINER, program, *args]
 
 
 def postgres_connection() -> tuple[str, str, str, str]:
@@ -294,9 +354,8 @@ def postgres_connection() -> tuple[str, str, str, str]:
 
 def subprocess_environment() -> dict[str, str]:
     env = os.environ.copy()
-    password = env.get("POSTGRES_PASSWORD")
-    if password:
-        env["PGPASSWORD"] = password
+    env.pop("POSTGRES_PASSWORD", None)
+    env.pop("PGPASSWORD", None)
     return env
 
 

@@ -22,7 +22,6 @@ from _n1_experiment import (
     experiment_lock,
     load_definition,
     load_run_records,
-    require_environment,
     require_program,
     sha256_file,
     subprocess_environment,
@@ -112,12 +111,11 @@ def _write_checksums(paths: list[Path], target: Path) -> None:
 
 
 def _execute(output: Path) -> None:
-    require_environment(["POSTGRES_PASSWORD"])
-    for program in ("bash", "git", "pg_dump", "psql", "gzip", "du", "date"):
+    for program in ("bash", "git", "docker", "gzip", "du", "date"):
         require_program(program)
 
     definition = load_definition()
-    records = load_run_records(definition)
+    records = load_run_records(definition, event_backed_only=True)
     if not records:
         raise ExperimentError("no N1 runs exist to export")
 

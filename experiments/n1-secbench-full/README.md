@@ -1,20 +1,43 @@
-# N1 full SEC-bench handoff
+# N1 handoff
 
-Prerequisites: branch `experiment/n1-secbench-full`, Docker, `uv`, PostgreSQL CLI tools,
-disk for two SEC-bench task image stacks, and your own `OPENAI_API_KEY` and
-`POSTGRES_PASSWORD` environment values. The 300 input fixtures are already in the branch.
-`prepare_n1_experiment.py` checks the complete toolchain, Docker/storage, configuration,
-writable paths, and Git state, then starts PostgreSQL and idempotently initializes its schema.
+Run from the cloned repository root.
+
+## 1. Environment and OpenAI key
 
 ```bash
-uv run python experiments/n1-secbench-full/prepare_n1_experiment.py
-
-uv run python experiments/n1-secbench-full/run_batch.py \
-  --batch-size 30 --parallel 2
-
-uv run python experiments/n1-secbench-full/export_data.py
+python3 experiments/n1-secbench-full/setup.py
 ```
 
-For multiple hosts, add one unique `--shard N/H` to each run command. Rerun the same command
-to resume. Images are deleted after each two-task wave. Send the entire export directory
-from every host; `SHA256SUMS` verifies each transfer.
+The committed `experiments/n1-secbench-full/.env.example` is the template. Setup creates
+the ignored, study-only `experiments/n1-secbench-full/.env` and asks once for
+`OPENAI_API_KEY`.
+
+## 2. Change the model (optional)
+
+Edit `experiments/n1-secbench-full/configs/N1-openhands-linear.yaml`. Change only
+`worker.model`.
+
+## 3. Run
+
+```bash
+python3 experiments/n1-secbench-full/run.py --parallel 2 --batch-size 30
+```
+
+This command prepares, runs, or resumes the experiment. Adjust `--parallel` and
+`--batch-size` for the host.
+
+Smoke:
+
+```bash
+python3 experiments/n1-secbench-full/run.py --smoke --parallel 2 --batch-size 2
+```
+
+## 4. Export
+
+After the run finishes:
+
+```bash
+python3 experiments/n1-secbench-full/export.py
+```
+
+The finished export is written to `~/n1-secbench-full-export`.
