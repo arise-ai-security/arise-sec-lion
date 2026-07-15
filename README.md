@@ -57,7 +57,6 @@ For SEC-bench the BOSS always follows a 4-phase process: **Builder → Exploiter
 - **`uv`** (for fixture fetching and local scripts): `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - A **Claude Code** session in this repo root if you want to use the `/secbench-run` and `/secbench-fixture` shortcut skills. They're optional; see [`skills/README.md`](skills/README.md) for one-line install (symlink or copy into `.claude/commands/`). The skill source of truth lives under `skills/` because `.claude/` is gitignored
 - A `deployment/.env` file with:
-  - `POSTGRES_PASSWORD` (anything, local-only)
   - `OPENAI_API_KEY` (required for OpenAI-backed runs — LiteLLM default path)
   - `ANTHROPIC_API_KEY` (required if using the Claude Code worker)
   - `OLLAMA_API_KEY` + `OLLAMA_API_BASE=https://ollama.com` (optional — switch the
@@ -104,7 +103,7 @@ Three containers should appear:
 | Container | Service | Purpose |
 |-----------|---------|---------|
 | `arise-app` | `app` | CLI entry point (sleeps until you `exec` into it) |
-| `arise-db` | `db`  | PostgreSQL 16 (event store) |
+| `postgres-main` | `db`  | Passwordless loopback-only PostgreSQL 16 + pgvector (all local data) |
 | `arise-api` | `api` | REST + SSE + React dashboard on `http://localhost:8000` |
 
 After editing Python code, rebuild only the app container: `docker compose --profile local up -d --build app`.

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="data:," />
+<title>N1 versus B4 — Confirmatory Experiment Design Report</title>
+<style>
+  :root {
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --bg:#f7f8fa; --paper:#ffffff; --panel:#eef1f4;
+    --ink:#101418; --ink-2:#4d5660; --ink-3:#747e89;
+    --line:#dde2e7; --line-2:#cbd2d9;
+    --blue:#2563a8; --blue-bg:#e8f0f9; --blue-tx:#1f5793;
+    --green:#15803d; --green-bg:#e9f4ed; --green-tx:#136632;
+    --purple:#6246a8; --purple-bg:#f0edfa; --purple-tx:#4f388b;
+    --red:#bb2d1f; --red-bg:#fbeae7; --red-tx:#9e261a;
+    --max:1120px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink-2);font-family:var(--sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue-tx);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--ink)}
+  nav{position:sticky;top:0;z-index:20;background:rgba(247,248,250,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  nav .inner{max-width:var(--max);height:50px;margin:0 auto;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+  .brand{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--ink)}
+  .links{display:flex;gap:17px;white-space:nowrap}
+  .links a{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 28px}
+  header{padding:62px 0 42px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:12px;color:var(--green-tx);margin-bottom:16px}
+  h1{max-width:900px;margin:0;color:var(--ink);font-size:clamp(34px,5vw,54px);font-weight:620;line-height:1.04;letter-spacing:-.03em}
+  .dek{max-width:76ch;margin:18px 0 0;font-size:19px;line-height:1.55}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:28px;padding-top:18px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+  .status{color:var(--red-tx);font-weight:700}
+  section{padding:52px 0;border-bottom:1px solid var(--line)}
+  .kick{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-bottom:8px}
+  .kick b{color:var(--green-tx)}
+  h2{margin:0 0 12px;color:var(--ink);font-size:clamp(24px,3vw,32px);line-height:1.2;letter-spacing:-.02em}
+  h3{margin:30px 0 8px;color:var(--ink);font-size:17px}
+  .intro{max-width:78ch;margin:0 0 26px;font-size:17px}
+  .lede{border-left:3px solid var(--green);padding:2px 0 2px 18px;margin:24px 0;max-width:86ch;color:var(--ink)}
+  .lede p{margin:7px 0}
+  figure{margin:0}
+  .frame{overflow-x:auto;border:1px solid var(--line-2);border-radius:8px;padding:20px;background-color:#fcfdfe;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:44px 44px}
+  .frame svg{display:block;width:100%;height:auto;min-width:880px}
+  figcaption{max-width:88ch;margin-top:11px;color:var(--ink-3);font-family:var(--mono);font-size:12px;line-height:1.55}
+  figcaption b{color:var(--ink-2)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:13px}
+  .legend span{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11px}
+  .legend i{width:12px;height:12px;border:1.5px solid;border-radius:2px}
+  .l-blue{border-color:var(--blue)!important;background:var(--blue-bg)}
+  .l-green{border-color:var(--green)!important;background:var(--green-bg)}
+  .l-purple{border-color:var(--purple)!important;background:var(--purple-bg)}
+  .l-ink{border-color:var(--ink)!important;background:var(--panel)}
+  table{width:100%;border-collapse:collapse;margin-top:24px;background:var(--paper);border:1px solid var(--line);font-size:13.5px}
+  th,td{padding:10px 13px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+  thead th{border-top:0;background:var(--panel);color:var(--ink);font-family:var(--mono);font-size:11.5px}
+  tbody th{color:var(--ink);font-family:var(--mono);font-size:12px;font-weight:650;width:18%}
+  tr:hover td,tr:hover tbody th{background:color-mix(in srgb,var(--panel) 55%,transparent)}
+  .note{margin-top:20px;padding:14px 16px;border:1px solid var(--line);background:var(--paper);font-size:14px}
+  .note strong{color:var(--ink)}
+  .warn{border-left:3px solid var(--red);background:var(--red-bg)}
+  .ok{border-left:3px solid var(--green);background:var(--green-bg)}
+  .formula{margin:24px 0;padding:16px 18px;background:var(--ink);color:#fff;font-family:var(--mono);font-size:14px;overflow-x:auto;white-space:pre}
+  .source-map{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;margin-top:20px}
+  .source-map div{border-top:1px solid var(--line);padding:10px 0;font-size:13.5px}
+  .source-map code{word-break:break-word}
+  footer{padding:38px 0 60px;font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+  .card{fill:var(--paper);stroke:var(--line-2);stroke-width:1.5}
+  .card.blue{fill:var(--blue-bg);stroke:var(--blue)} .card.green{fill:var(--green-bg);stroke:var(--green)}
+  .card.purple{fill:var(--purple-bg);stroke:var(--purple)} .card.red{fill:var(--red-bg);stroke:var(--red)}
+  .card.ink{stroke:var(--ink)} .card.panel{fill:var(--panel)}
+  .title{font-family:var(--sans);font-size:15px;font-weight:650;fill:var(--ink)}
+  .title.sm{font-size:13px}.subt{font-family:var(--mono);font-size:10.5px;fill:var(--ink-3)}
+  .role{font-family:var(--mono);font-size:11.5px;font-weight:700}
+  .role.blue{fill:var(--blue-tx)} .role.green{fill:var(--green-tx)} .role.purple{fill:var(--purple-tx)} .role.red{fill:var(--red-tx)}
+  .edge{fill:none;stroke:#969fa8;stroke-width:1.5}.edge.blue{stroke:var(--blue)}.edge.green{stroke:var(--green)}.edge.red{stroke:var(--red)}.edge.dash{stroke-dasharray:6 5}
+  .anno{font-family:var(--mono);font-size:10.5px;fill:var(--ink-2)}
+  @media(max-width:900px){.links{display:none}.source-map{grid-template-columns:1fr}}
+  @media(max-width:700px){.wrap,nav .inner{padding-left:20px;padding-right:20px}table{display:block;overflow-x:auto;white-space:normal}.meta{display:block}.meta span{display:block;margin:5px 0}}
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#131315;--paper:#1a1a1d;--panel:#1d1d20;--ink:#ececef;--ink-2:#b3b3ba;--ink-3:#84848c;--line:#2b2b30;--line-2:#3a3a41;--blue:#5b9bd8;--blue-bg:#15212f;--blue-tx:#8bbbe6;--green:#4ea774;--green-bg:#16241c;--green-tx:#7fca9c;--purple:#8b76c9;--purple-bg:#211d31;--purple-tx:#b8a7e7;--red:#d66052;--red-bg:#2a1512;--red-tx:#e79184}.frame{background-color:#161618}nav{background:rgba(19,19,21,.92)}
+  }
+  @media print{nav{display:none}section{page-break-inside:auto}.frame{overflow:visible;padding:10px;background-image:none}.frame svg{min-width:0}.wrap{max-width:none;padding:0 10mm}body{font-size:11pt}a{color:inherit}table{page-break-inside:auto}tr{page-break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<nav><div class="inner">
+  <span class="brand">ARISE / EXPERIMENT DESIGN</span>
+  <span class="links"><a href="#protocol">protocol</a><a href="#arms">arms</a><a href="#parity">parity</a><a href="#success">success</a><a href="#analysis">analysis</a><a href="#readiness">readiness</a><a href="#sources">sources</a></span>
+</div></nav>
+
+<header><div class="wrap">
+  <div class="eyebrow">Confirmatory Experiment Design Report</div>
+  <h1>N1 versus B4: naive OpenHands against the complete adaptive system</h1>
+  <p class="dek">A paired SEC-bench protocol with common solver objectives, common submission artifacts, and one arm-independent post-run evaluator. N1 receives no in-run Host mechanics; B4 receives the full hierarchy, role routing, procedures, and bounded recovery.</p>
+  <div class="meta"><span>Design amendment · 2026-07-14</span><span class="status">Status: draft · not launched</span><span>Primary contrast: B4 − N1</span><span>Current result: none</span></div>
+</div></header>
+
+<main class="wrap">
+  <section id="protocol">
+    <div class="kick"><b>01</b> / Research question and protocol</div>
+    <h2>Does the complete B4 system outperform naive OpenHands?</h2>
+    <div class="lede">
+      <p><strong>Research question.</strong> Under identical SEC-bench assignments, submission requirements, and post-run evaluation, does the complete B4 system achieve higher combined success than naive OpenHands N1?</p>
+      <p><strong>Primary estimand.</strong> Paired B4-minus-N1 difference in combined success over the frozen cohort.</p>
+      <p><strong>Claim boundary.</strong> This is a complete-system comparison. It cannot attribute a difference to hierarchy alone because B4 also changes models, context handling, Host procedures, and recovery.</p>
+      <p><strong>Current result.</strong> None. The preregistration is draft and unfrozen; the current 19-task candidate cohort overlaps development data.</p>
+    </div>
+    <figure>
+      <div class="frame">
+        <svg viewBox="0 0 1080 590" role="img" aria-label="N1 and B4 paired protocol with a one-way evaluation boundary">
+          <defs>
+            <marker id="p-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#969fa8"/></marker>
+            <marker id="p-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
+            <marker id="p-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+          </defs>
+          <rect class="card ink" x="300" y="20" width="480" height="68" rx="6"/>
+          <text class="title" x="540" y="48" text-anchor="middle">Same paired assignment</text>
+          <text class="subt" x="540" y="69" text-anchor="middle">task · base commit · CVE context · 14,400-second run ceiling</text>
+          <path class="edge blue" d="M450,88 V122 H250 V146" marker-end="url(#p-b)"/>
+          <path class="edge green" d="M630,88 V122 H830 V146" marker-end="url(#p-g)"/>
+
+          <text class="role blue" x="250" y="139" text-anchor="middle">N1 CONTROL</text>
+          <rect class="card blue" x="60" y="152" width="380" height="164" rx="6"/>
+          <text class="title" x="250" y="182" text-anchor="middle">One OpenHands session</text>
+          <text class="subt" x="84" y="212">subagents explicitly OFF</text>
+          <text class="subt" x="84" y="235">Host procedural dispatch explicitly OFF</text>
+          <text class="subt" x="84" y="258">agent issues and interprets secb commands</text>
+          <text class="subt" x="84" y="281">no procedure evidence, Host repair, or recheck</text>
+
+          <text class="role green" x="830" y="139" text-anchor="middle">B4 TREATMENT</text>
+          <rect class="card green" x="640" y="152" width="380" height="164" rx="6"/>
+          <text class="title" x="830" y="182" text-anchor="middle">Complete adaptive system</text>
+          <text class="subt" x="664" y="212">BOSS → phase Managers → compact roles</text>
+          <text class="subt" x="664" y="235">specialized model and context routing</text>
+          <text class="subt" x="664" y="258">four deterministic Host procedures</text>
+          <text class="subt" x="664" y="281">bounded repair + Host recheck</text>
+
+          <path class="edge blue" d="M250,316 V352 H470"/>
+          <path class="edge green" d="M830,316 V352 H610"/>
+          <rect class="card ink" x="320" y="330" width="440" height="66" rx="6"/>
+          <text class="title" x="540" y="357" text-anchor="middle">Same solver submission contract</text>
+          <text class="subt" x="540" y="378" text-anchor="middle">build · PoC/repro · RCA · PatchPlan · diff · diagnostics · report</text>
+
+          <path class="edge red dash" d="M150,430 H930"/>
+          <text class="role red" x="540" y="423" text-anchor="middle">SOLVER RUN CLOSED · NO FEEDBACK UPSTREAM</text>
+          <path class="edge" d="M540,430 V470" marker-end="url(#p-a)"/>
+          <rect class="card panel" x="175" y="472" width="730" height="82" rx="6"/>
+          <text class="title" x="540" y="502" text-anchor="middle">Same independent evaluator</text>
+          <text class="subt" x="540" y="524" text-anchor="middle">six fresh replays ∧ safety/provenance ∧ frozen regression ∧ blinded semantics</text>
+          <text class="subt" x="540" y="543" text-anchor="middle">measurement equipment — never solving assistance</text>
+        </svg>
+      </div>
+      <div class="legend"><span><i class="l-blue"></i>N1 control</span><span><i class="l-green"></i>B4 treatment</span><span><i class="l-ink"></i>common task and measurement</span><span><i class="l-purple"></i>post-run evidence</span></div>
+      <figcaption><b>Figure 1.</b> Fairness means identical assignments, outputs, and measurement. It does not mean identical solver assistance: that assistance difference is the treatment.</figcaption>
+    </figure>
+  </section>
+
+  <section id="arms">
+    <div class="kick"><b>02</b> / Arm definitions</div>
+    <h2>The control boundary is explicit and fail-closed</h2>
+    <p class="intro">N1 is naive tool use, not “B4 with one worker.” It can execute mechanical commands through its normal OpenHands shell tool, but the Arise Host cannot select, execute, or feed back any registered procedure. B4 deliberately receives those capabilities.</p>
+    <table>
+      <thead><tr><th>Dimension</th><th>N1 control</th><th>B4 treatment</th><th>Interpretation</th></tr></thead>
+      <tbody>
+        <tr><th>Solver topology</th><td>one flat OpenHands session</td><td>BOSS → four phase Managers → compact role workers</td><td>treatment difference</td></tr>
+        <tr><th>Subagents</th><td>disabled</td><td>Host-created hierarchy</td><td>treatment difference</td></tr>
+        <tr><th>In-run Host procedures</th><td>explicitly disabled</td><td>Build-Verifier, Exploit-Validator, Patch-Applier, Patch-Validator</td><td>treatment difference</td></tr>
+        <tr><th>Mechanical actions</th><td>OpenHands issues and interprets <code>secb</code> commands</td><td>Host executes the four registered procedures</td><td>treatment difference</td></tr>
+        <tr><th>Recovery</th><td>no Host procedure feedback or recheck</td><td>initial Host attempt → one agentic repair → one Host recheck; Manager recovery after required failure</td><td>treatment difference</td></tr>
+        <tr><th>Models</th><td><code>gpt-5.3-codex</code></td><td>GPT-5.4 Boss/Managers; role-routed Codex/mini workers; no model for initial Host attempts</td><td>treatment difference</td></tr>
+        <tr><th>Prompt shape</th><td>one sequential flat prompt</td><td>shared phase contract plus role, handoff, and procedure instructions</td><td>necessary execution difference</td></tr>
+        <tr><th>Domain objective</th><td>Build → Exploit → Analyze → Fix → Report</td><td>same</td><td>controlled</td></tr>
+        <tr><th>Submission artifacts</th><td>common contract</td><td>common contract</td><td>controlled</td></tr>
+        <tr><th>Final evaluator</th><td>fresh post-run combined evaluator; no feedback</td><td>same</td><td>controlled</td></tr>
+        <tr><th>Valid claim</th><td>naive OpenHands performance</td><td>complete B4-system performance</td><td>B4-minus-N1 is a bundled-system effect</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Elements held constant</h3>
+    <table>
+      <thead><tr><th>Controlled element</th><th>Rule</th></tr></thead>
+      <tbody>
+        <tr><th>Assignment</th><td>identical <code>(task, base_commit, replicate)</code> pairs</td></tr>
+        <tr><th>CVE input</th><td>same solver-visible fields and same forbidden golden information</td></tr>
+        <tr><th>Domain contract</th><td>same goals, quality requirements, and artifact names</td></tr>
+        <tr><th>Run ceiling</th><td>same 14,400-second deadline; aggregate compute still differs and must be reported</td></tr>
+        <tr><th>Evaluation</th><td>same external replay, safety floor, frozen regression plan, and semantic rubric</td></tr>
+        <tr><th>Allocation</th><td>seeded randomized, interleaved adjacent pairs</td></tr>
+        <tr><th>Missingness</th><td>launch failures, timeouts, and incomplete evaluations remain intention-to-treat failures</td></tr>
+        <tr><th>Feedback boundary</th><td>final evaluator starts only after submission and sends nothing to either solver</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><strong>B3 is not a confirmatory arm here.</strong> B3 versus B4 is the appropriate Manager-layer contrast because those arms share compact roles, model routing, tools, procedures, context policy, retries, and budgets.</div>
+  </section>
+
+  <section id="parity">
+    <div class="kick"><b>03</b> / Prompt and submission parity</div>
+    <h2>Same semantic contract; execution-specific wrappers</h2>
+    <figure>
+      <div class="frame">
+        <svg viewBox="0 0 1080 330" role="img" aria-label="Common prompt contract branching into flat and hierarchical execution wrappers">
+          <defs><marker id="q-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#969fa8"/></marker></defs>
+          <rect class="card ink" x="180" y="24" width="720" height="82" rx="6"/>
+          <text class="title" x="540" y="52" text-anchor="middle">Common SEC-bench domain contract</text>
+          <text class="subt" x="540" y="74" text-anchor="middle">CVE context · anti-leak rules · phase goals · artifact names · quality criteria</text>
+          <text class="subt" x="540" y="92" text-anchor="middle">evidence-grounded RCA · two repair sites · exact PatchPlan · validated model patch</text>
+          <path class="edge blue" d="M420,106 V150 H255 V178" marker-end="url(#q-a)"/>
+          <path class="edge green" d="M660,106 V150 H825 V178" marker-end="url(#q-a)"/>
+          <rect class="card blue" x="80" y="180" width="350" height="104" rx="6"/>
+          <text class="title" x="255" y="210" text-anchor="middle">N1 flat wrapper</text>
+          <text class="subt" x="255" y="234" text-anchor="middle">one agent · sequential phases · self-execution</text>
+          <text class="subt" x="255" y="255" text-anchor="middle">no Host, procedure, role, or handoff claims</text>
+          <rect class="card green" x="650" y="180" width="350" height="104" rx="6"/>
+          <text class="title" x="825" y="210" text-anchor="middle">B4 role wrappers</text>
+          <text class="subt" x="825" y="234" text-anchor="middle">Managers · roles · scoped handoffs</text>
+          <text class="subt" x="825" y="255" text-anchor="middle">procedure and recovery instructions where applicable</text>
+        </svg>
+      </div>
+      <figcaption><b>Figure 2.</b> Full prompts cannot be byte-identical because the execution systems differ. The controlled unit is the domain objective, evidence standard, and artifact contract.</figcaption>
+    </figure>
+
+    <table>
+      <thead><tr><th>Prompt content</th><th>N1</th><th>B4</th></tr></thead>
+      <tbody>
+        <tr><th>CVE fields and sanitizer oracle</th><td>same</td><td>same</td></tr>
+        <tr><th>Forbidden golden information</th><td>same</td><td>same</td></tr>
+        <tr><th>Build, exploit, analyze, fix, report goals</th><td>same</td><td>same</td></tr>
+        <tr><th>Artifact names and quality requirements</th><td>same</td><td>same</td></tr>
+        <tr><th>Flat single-agent framing</th><td>yes</td><td>no</td></tr>
+        <tr><th>Roles, Managers, handoffs</th><td>no</td><td>yes</td></tr>
+        <tr><th>Host procedure instructions</th><td>no</td><td>yes</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Common artifact contract</h3>
+    <table>
+      <thead><tr><th>Phase</th><th>Common solver artifacts</th><th>Role in evaluation</th></tr></thead>
+      <tbody>
+        <tr><th>Build</th><td><code>base_commit_hash</code>, <code>/src/build.sh</code>, <code>repo_changes.diff</code>, <code>binary_paths.txt</code></td><td>reconstruct and identify the vulnerable build</td></tr>
+        <tr><th>Exploit</th><td><code>poc_path.txt</code>, selected PoC, <code>repro.sh</code></td><td>input to fresh pre-patch replay</td></tr>
+        <tr><th>Analysis</th><td><code>root_cause_analysis.txt</code>, <code>patch_plan.json</code></td><td>common causal and semantic evidence</td></tr>
+        <tr><th>Fix</th><td><code>model_patch.diff</code></td><td>input to fresh patch/build/post-patch replay</td></tr>
+        <tr><th>Diagnostics</th><td><code>exploit_validation_results.txt</code>, <code>patch_validation_results.txt</code></td><td>required for completeness; solver-authored verdict content remains diagnostic</td></tr>
+        <tr><th>Report</th><td><code>security_report.md</code></td><td>evidence synthesis; never an override</td></tr>
+      </tbody>
+    </table>
+    <div class="note ok"><strong>PatchPlan boundary.</strong> <code>patch_plan.json</code> contains solver-authored edit intent only and rejects unknown fields. In B4, the Host privately binds both the validated normalized plan hash and exact raw bytes to its independently frozen replay identity. That identity is not a solver field, is not required from N1, and does not enter the blinded semantic packet.</div>
+  </section>
+
+  <section id="success">
+    <div class="kick"><b>04</b> / Success criteria</div>
+    <h2>Four gates; failure of any gate is final</h2>
+    <figure>
+      <div class="frame">
+        <svg viewBox="0 0 1080 300" role="img" aria-label="Four success gates combined by an AND operation">
+          <defs><marker id="s-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#969fa8"/></marker></defs>
+          <rect class="card blue" x="30" y="54" width="220" height="86" rx="6"/>
+          <text class="title sm" x="140" y="82" text-anchor="middle">Official mechanical</text><text class="subt" x="140" y="105" text-anchor="middle">artifacts · pre ×3 oracle</text><text class="subt" x="140" y="124" text-anchor="middle">patch/build/post ×3</text>
+          <rect class="card green" x="290" y="54" width="220" height="86" rx="6"/>
+          <text class="title sm" x="400" y="82" text-anchor="middle">Safety + provenance</text><text class="subt" x="400" y="105" text-anchor="middle">sealed paths · hashes</text><text class="subt" x="400" y="124" text-anchor="middle">fresh base · identity</text>
+          <rect class="card purple" x="550" y="54" width="220" height="86" rx="6"/>
+          <text class="title sm" x="660" y="82" text-anchor="middle">Host regression</text><text class="subt" x="660" y="105" text-anchor="middle">frozen task/base plan</text><text class="subt" x="660" y="124" text-anchor="middle">fresh patched container</text>
+          <rect class="card ink" x="810" y="54" width="240" height="86" rx="6"/>
+          <text class="title sm" x="930" y="82" text-anchor="middle">Semantic accepted</text><text class="subt" x="930" y="105" text-anchor="middle">3 valid seats</text><text class="subt" x="930" y="124" text-anchor="middle">2-of-3 positive</text>
+          <path class="edge" d="M140,140 V184 H470"/><path class="edge" d="M400,140 V184 H500"/><path class="edge" d="M660,140 V184 H580"/><path class="edge" d="M930,140 V184 H610"/>
+          <rect class="card red" x="470" y="170" width="140" height="58" rx="6"/>
+          <text class="title" x="540" y="205" text-anchor="middle">AND</text>
+          <path class="edge" d="M540,228 V258" marker-end="url(#s-a)"/>
+          <text class="role green" x="540" y="284" text-anchor="middle">COMBINED SUCCESS</text>
+        </svg>
+      </div>
+      <figcaption><b>Figure 3.</b> The formula and implementation are arm-independent. Semantic judging is reached only after mechanical, safety, and regression eligibility pass.</figcaption>
+    </figure>
+
+    <div class="formula">success = official_mechanical
+       AND safety_and_provenance
+       AND host_regression
+       AND semantic_accepted</div>
+
+    <table>
+      <thead><tr><th>Gate</th><th>Exact success condition</th><th>Authority</th></tr></thead>
+      <tbody>
+        <tr><th>Artifact completeness</th><td>every common deliverable exists and is non-vacuous except <code>repo_changes.diff</code>; <code>patch_plan.json</code> satisfies the strict common schema</td><td>arm-independent mechanical contract</td></tr>
+        <tr><th>Pre-patch replay</th><td>declared PoC resolves; all 3 fresh replays pass and match frozen sanitizer class, access kind, and top application frame</td><td>external Host evaluator</td></tr>
+        <tr><th>Patch replay</th><td>non-empty patch applies and builds; all 3 fresh primary post-patch evaluations pass without timeout, signal, assertion, sanitizer finding, unacceptable exit, or crash</td><td>external Host evaluator</td></tr>
+        <tr><th>Safety / provenance</th><td>canonical protected paths and hashes are valid; replay target and base match; all six replays have distinct container identities</td><td>safety floor</td></tr>
+        <tr><th>Regression</th><td>a frozen task/base-specific plan exists and every required command passes in a fresh patched container</td><td>Host regression runner</td></tr>
+        <tr><th>Semantic</th><td>all three pinned seats return valid votes; at least two accept root cause, repair layer, suppression risk, evidence consistency, and regression risk</td><td>blinded semantic panel</td></tr>
+        <tr><th>Combined</th><td>every preceding gate passes</td><td><code>combined_verdict.py</code></td></tr>
+      </tbody>
+    </table>
+    <div class="note warn"><strong>Does not establish success:</strong> <code>WorkCompleted</code>, runner exit zero, agent-authored <code>VERDICT: PASS</code>, B4's in-run procedure PASS, file presence alone, worker-authored regression prose, or strict/generous sensitivity-mode results. The primary mechanical endpoint uses the configured primary mode.</div>
+  </section>
+
+  <section id="analysis">
+    <div class="kick"><b>05</b> / Analysis plan</div>
+    <h2>Paired intention-to-treat analysis</h2>
+    <table>
+      <thead><tr><th>Item</th><th>Preregistered rule</th></tr></thead>
+      <tbody>
+        <tr><th>Pairing key</th><td><code>(task, base_commit, replicate)</code></td></tr>
+        <tr><th>Allocation</th><td>seeded randomized, interleaved adjacent pairs</td></tr>
+        <tr><th>Primary endpoint</th><td>paired combined-success difference, B4 minus N1</td></tr>
+        <tr><th>Interval</th><td>paired 95% percentile bootstrap, 10,000 samples</td></tr>
+        <tr><th>Binary paired test</th><td>exact two-sided McNemar</td></tr>
+        <tr><th>Superiority rule</th><td>point difference ≥ 0.05 and lower confidence bound &gt; 0</td></tr>
+        <tr><th>Missing launch / timeout</th><td>retained as failure</td></tr>
+        <tr><th>Evaluator unavailable</th><td>ITT failure; lowers completeness and blocks superiority</td></tr>
+        <tr><th>Missing cost</th><td>primary success remains computable; cost endpoint unavailable, never zero-imputed</td></tr>
+        <tr><th>Secondary endpoints</th><td>cost/run, cost/combined-success, evaluation completeness</td></tr>
+        <tr><th>Stopping</th><td>every preregistered pair once; no optional stopping</td></tr>
+      </tbody>
+    </table>
+    <div class="note warn"><strong>Open design item.</strong> The draft currently specifies one replicate and contains no completed power justification. Those choices must be resolved before freeze.</div>
+
+    <h3>Validity and claim limits</h3>
+    <table>
+      <thead><tr><th>Risk</th><th>Consequence</th><th>Required treatment</th></tr></thead>
+      <tbody>
+        <tr><th>Bundled treatment</th><td>cannot identify hierarchy alone</td><td>report “complete B4-system effect”</td></tr>
+        <tr><th>Unequal aggregate compute</th><td>more opportunity may drive B4 outcome</td><td>report wall time, LLM usage, Host work, and cost</td></tr>
+        <tr><th>Development overlap</th><td>selection bias</td><td>replace the current 19-task roster</td></tr>
+        <tr><th>Missing regression plans</th><td>combined outcome unavailable</td><td>freeze a plan for every selected task/base</td></tr>
+        <tr><th>Judge unavailability</th><td>incomplete semantic gate</td><td>require all three pinned seats in pilot</td></tr>
+        <tr><th>Historical evaluator defects</th><td>old success labels are not comparable</td><td>keep historical batches descriptive only</td></tr>
+        <tr><th>Prompt text differs</th><td>byte identity is impossible across execution shapes</td><td>require common domain semantics and artifacts, not identical full prompts</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="readiness">
+    <div class="kick"><b>06</b> / Readiness</div>
+    <h2>No confirmatory result yet</h2>
+    <p class="intro">The design is amended in code and documentation, but launch readiness requires a complete clean pilot and a replacement untouched cohort. “Implemented” below is not a study result.</p>
+    <table>
+      <thead><tr><th>Requirement</th><th>Current state</th><th>Before launch</th></tr></thead>
+      <tbody>
+        <tr><th>N1 procedure isolation</th><td>explicit false pins plus config and launch validation</td><td>focused tests and pilot must prove fail-closed drift handling</td></tr>
+        <tr><th>Common RCA / PatchPlan</th><td>common solver artifact contract</td><td>rendered-prompt and evaluator-mirror checks</td></tr>
+        <tr><th>Private B4 replay binding</th><td>Host approval evidence, outside solver schema</td><td>procedure integrity tests</td></tr>
+        <tr><th>Fresh six-replay evaluator</th><td>implemented</td><td>live replay on every selected image</td></tr>
+        <tr><th>Regression plans</th><td>19 plans cover the obsolete candidate roster</td><td>regenerate and freeze for replacement cohort</td></tr>
+        <tr><th>Blinded panel smoke</th><td>three pinned seats configured</td><td>prove all return valid structured votes</td></tr>
+        <tr><th>Untouched cohort</th><td>not satisfied; current roster overlaps development</td><td>replace all overlapping tasks</td></tr>
+        <tr><th>Frozen preregistration</th><td>draft, <code>frozen_at: null</code></td><td>resolve open design items and freeze hashes</td></tr>
+        <tr><th>Complete pilot bundle</th><td>not yet demonstrated</td><td>six identities, regression, panel, hashes, blinding, and no human action</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="sources" style="border-bottom:0">
+    <div class="kick"><b>07</b> / Source map</div>
+    <h2>Authoritative implementation and protocol files</h2>
+    <div class="source-map">
+      <div><code>experiments/n1-secbench-full/configs/N1-openhands-linear.yaml</code><br />N1 control settings</div>
+      <div><code>experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml</code><br />B4 treatment settings</div>
+      <div><code>prompts/domains/secbench/phases/</code><br />common domain phase contract</div>
+      <div><code>plugins/security/deliverables.py</code><br />canonical submission artifacts</div>
+      <div><code>plugins/security/patch_plan.py</code><br />solver-authored edit-plan schema</div>
+      <div><code>experiments/shared/evaluation/combined_verdict.py</code><br />authoritative four-gate composition</div>
+      <div><code>experiments/shared/evaluation/semantic_gate.py</code><br />blinding, rubric, and 2-of-3 aggregation</div>
+      <div><code>experiments/b4-boss-manager-worker/confirmatory/preregistration.yaml</code><br />paired estimand and missingness rules</div>
+    </div>
+    <p class="note">This report describes the current working-tree design. It intentionally contains no historical success rate because earlier batches used different treatment and evaluation contracts.</p>
+  </section>
+</main>
+
+<footer class="wrap">Arise × SEC-bench · N1 versus B4 confirmatory experiment design · self-contained diagram-first report</footer>
+</body>
+</html>

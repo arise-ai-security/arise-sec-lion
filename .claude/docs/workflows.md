@@ -39,7 +39,7 @@ Edit `deployment/.env` and set at minimum:
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `POSTGRES_PASSWORD` | Yes | Any secure string for local DB |
+| `POSTGRES_PASSWORD` | No | Remote/cloud databases only; local `postgres-main` uses trust |
 | `OPENAI_API_KEY` | Yes | OpenAI API key for LLM calls |
 | `ANTHROPIC_API_KEY` | No | Only if using Claude-based workers; otherwise use `claude login` |
 | `HOST_PROJECT_ROOT` | No | Absolute host path to repo root; needed for Docker-out-of-Docker volume mapping in SEC-bench |
@@ -62,13 +62,13 @@ All compose commands use `deployment/docker-compose.yml`. Run from the repo root
 | `local` | `docker compose --profile local up -d` | `app` + `api` + `db` + `web` | Local PostgreSQL 16 on port 5432 | Day-to-day development |
 | `dev` | `docker compose --profile dev up -d` | `app-dev` + `api-dev` | External Supabase (configured in `.env.dev`) | Shared dev environment |
 | `prod` | `docker compose --profile prod up -d` | `app-prod` + `db` | Local PostgreSQL 16 | Production deployment |
-| `test` | `docker compose --profile test up -d` | `test-db` | Ephemeral tmpfs PostgreSQL on port 5433 | Integration tests, data lost on stop |
+| `test` | `docker compose --profile test up -d db` | `db` | `arise_test` inside `postgres-main` on port 5432 | Integration tests with isolated logical data |
 
 ### Local Profile Details
 
 The `local` profile starts four containers:
 
-- **`arise-db`** -- PostgreSQL 16 Alpine. Schema auto-created from `infrastructure/sql/create_events_table.sql` via `docker-entrypoint-initdb.d`. Data persisted in the `postgres_data` Docker volume. Exposed on host port `${POSTGRES_PORT:-5432}`.
+- **`postgres-main`** -- PostgreSQL 16 with pgvector. Schemas are initialized through `docker-entrypoint-initdb.d`. Every local logical database is persisted under `data/postgres`. Host access is passwordless and bound only to `127.0.0.1:${POSTGRES_PORT:-5432}`.
 - **`arise-api`** -- FastAPI server on port 8000. Entry: `uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000`. Health check at `/api/health`.
 - **`arise-app`** -- Long-running container (`sleep infinity`) for executing CLI commands interactively. Mounts the Docker socket for Docker-out-of-Docker SEC-bench execution. Uses `init: true` (tini) to reap zombie processes.
 - **`arise-web`** -- Node 22 slim container running the React/Vite frontend (`npm run dev -- --host 0.0.0.0`). Mounts `query/web` as a volume. No host port mapping by default; access via container networking or add a `ports:` entry.
@@ -119,7 +119,8 @@ docker compose --profile local exec app python main.py prompts    # Inspect prom
 uvicorn query.api.bootstrap:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-Requires `POSTGRES_PASSWORD` and database connection env vars to be set.
+Uses the passwordless local database defaults. Set database environment overrides only when
+connecting to a different server.
 
 ### Frontend Dev Server
 
@@ -174,7 +175,8 @@ pyright
 uv run pytest                              # Full suite
 uv run pytest core/domain/tests/           # Single layer
 uv run pytest -k test_boss_initialization  # Single test by name
-uv run pytest -m integration               # By marker (requires running test-db)
+TEST_DB_URL=postgresql://arise@127.0.0.1:5432/arise_test \
+  uv run pytest -m integration             # Same postgres-main container
 ```
 
 Tests use async auto-mode and follow Given-When-Then style with `# Given:` / `# When:` / `# Then:` comments.
@@ -289,6 +291,25 @@ deployment/build-secbench-tools.sh hwiwonlee/secb.eval.x86_64.gpac.cve-2023-2838
 
 Multiple inputs can be passed in a single invocation.
 
+### Publishing a large SEC-bench roster
+
+Do not run the tool installation Dockerfile once per CVE. Build one immutable
+Ubuntu 20.04/amd64 toolchain and graft its filesystem layers onto each upstream
+base manifest in Docker Hub:
+
+```bash
+deployment/build-secbench-toolchain.sh cheshire0814
+deployment/publish-secbench-tools.sh cheshire0814 \
+  --tool-image cheshire0814/secb-tools:toolchain-focal-amd64-v1 \
+  --parallel 8
+```
+
+The publisher preserves every target base's environment, command, labels, and
+working directory. It performs registry-to-registry blob mounts plus small
+config/manifest uploads; it does not build or pull the 300 CVE images locally.
+Existing destination tags are skipped unless `--force` is supplied. Use
+`--dataset` or `--lock` for rosters other than the N1 300 dataset.
+
 ### CVE JSON files
 
 Sample CVE descriptors live in `deployment/`:
@@ -314,14 +335,11 @@ PostgreSQL 16 with event sourcing. The schema is a single `events` table defined
 
 The table uses optimistic concurrency control via a unique constraint on `(aggregate_id, sequence_number)`.
 
-### Reset local database
+### Local database storage
 
-```bash
-docker compose --profile local down -v   # removes the postgres_data volume
-docker compose --profile local up -d     # recreates with fresh schema
-```
-
-The test profile (`test-db`) uses `tmpfs` storage, so data is automatically discarded when the container stops.
+Do not reset the local cluster as routine test cleanup. `postgres-main` persists every logical
+database under `data/postgres`; integration tests use `arise_test` and drop only their test
+table. Back up the cluster before any intentional destructive maintenance.
 
 ### Common Docker Commands
 

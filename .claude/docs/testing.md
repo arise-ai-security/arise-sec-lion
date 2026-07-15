@@ -231,16 +231,16 @@ async def test_append_and_retrieve(event_store) -> None:
 Run infrastructure tests with:
 
 ```bash
-# Start test database
-docker compose -f docker-compose.test.yml up -d
+# Start the one local PostgreSQL container
+docker compose -f deployment/docker-compose.yml --profile test up -d db
 
 # Run with database URL
-TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" \
+TEST_DB_URL="postgresql://arise@127.0.0.1:5432/arise_test" \
     uv run pytest infrastructure/tests/test_event_store.py -v
-
-# Stop database
-docker compose -f docker-compose.test.yml down -v
 ```
+
+`arise_test` is a logical database inside `postgres-main`. It isolates destructive test
+cleanup from `arise_events` without creating a second PostgreSQL container or data mount.
 
 ## Test Doubles
 

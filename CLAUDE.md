@@ -94,13 +94,13 @@
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
 | `ARISE_ENV` | No | Optional local overlay name (`config/config.<value>.yaml`) | `development` |
-| `POSTGRES_PASSWORD` | Yes | Database password (env var only, not in YAML) | -- |
+| `POSTGRES_PASSWORD` | No | Optional remote/cloud database password; local `postgres-main` uses trust | -- |
 | `POSTGRES_HOST` | No | Database host | `localhost` |
 | `POSTGRES_PORT` | No | Database port | `5432` |
 | `OPENAI_API_KEY` | Yes | OpenAI API key for LLM calls | -- |
 | `ANTHROPIC_API_KEY` | No | Anthropic API key (Claude worker) | -- |
 | `HOST_PROJECT_ROOT` | No | Host path for Docker-out-of-Docker volume mapping | -- |
 
-Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority). `deployment/.env` may hold non-secret local configuration only. Retrieve personal provider/database credentials from Bitwarden and inject them into the process environment at launch; never persist them in `.env`.
+Config loads: `config/config.yaml` (base) <- `config/config.{ARISE_ENV}.yaml` (overlay) <- env vars (highest priority). `deployment/.env` may hold non-secret local configuration only. Local `postgres-main` is passwordless and published only on `127.0.0.1`; remote/cloud database credentials remain secrets and must be injected from Bitwarden at launch.
 
 > Step-by-step recipes (events, endpoints, ports/adapters, plugins, config) live in `.claude/docs/patterns.md`.

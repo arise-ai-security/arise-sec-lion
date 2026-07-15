@@ -47,7 +47,7 @@ decomposed leaf workers", not B4 topology alone.
   (`experiments/b4-boss-manager-worker/configs/B4-boss-manager-worker.yaml:1-12`,
   `:36-40`).
 - N1 config: flat OpenHands with `worker.model: gpt-5.3-codex`
-  (`experiments/n1-openhands-linear/configs/N1-openhands-linear.yaml:1-18`).
+  (`experiments/n1-secbench-full/configs/N1-openhands-linear.yaml:1-18`).
 - Evaluator floor: only upgrades FAIL to PASS when the observed crash signature
   matches class, access kind, and top application frame; provenance requires a
   runtime seal plus ASan in harness-captured events

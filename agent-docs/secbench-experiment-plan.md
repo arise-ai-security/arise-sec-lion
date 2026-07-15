@@ -2,6 +2,12 @@
 
 Experiment plan for validating arise-sec-lion's tree-topology multi-agent system against SEC-bench cybersecurity benchmarks.
 
+> **Superseded for the current N1/B4 confirmatory design.** Use
+> [`docs/n1-b4-experiment-report.html`](../docs/n1-b4-experiment-report.html) for the
+> current control/treatment boundary, common artifact contract, four-gate success
+> definition, paired analysis, and release status. The historical material below remains
+> useful only as planning context.
+
 > **Forward-looking plan.** This document is a plan, not a record of the current system.
 > For as-built truth (architecture, runtime, criteria wiring, current models, with
 > `file:line` citations) see [`SYSTEM_REFERENCE.md`](../SYSTEM_REFERENCE.md). Live

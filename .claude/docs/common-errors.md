@@ -40,15 +40,15 @@ Fix: Run `pyright`. Common issues: missing return types, Protocol signatures not
 
 ## Configuration & Environment Errors
 
-### Missing POSTGRES_PASSWORD
+### Local PostgreSQL is unavailable
 
 ```
-ValueError: POSTGRES_PASSWORD environment variable is required
+ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 5432)
 ```
 
-Source: `config/settings.py`, `Settings._build_from_config`. The only mandatory env var.
-
-Fix: `export POSTGRES_PASSWORD=your_password`. Other DB env vars (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_DB`) are optional overrides with defaults from `config/config.yaml`.
+Source: local `postgres-main` is stopped. Start it with
+`docker compose -f deployment/docker-compose.yml --profile local up -d db`. Local access is
+passwordless and loopback-only; `POSTGRES_PASSWORD` is not required.
 
 ### Wrong ARISE_ENV Value
 

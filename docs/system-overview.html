@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="data:," />
 <title>Arise × SEC-bench — System Overview</title>
 <style>
   :root {
@@ -179,7 +180,7 @@
 <nav class="top"><div class="inner">
   <span class="brand"><span class="dot">▸</span> arise × sec-bench</span>
   <span class="links">
-    <a href="#story">what</a><a href="#arch">architecture</a><a href="#matrix">experiments</a>
+    <a href="#story">what</a><a href="#arch">architecture</a><a href="#experiment">experiment</a>
     <a href="#adaptive">adaptive</a><a href="#roles">workers</a><a href="#proc">procedures</a><a href="#evaluator">evaluator</a><a href="#release">release</a><a href="#ref">reference</a>
   </span>
 </div></nav>
@@ -187,7 +188,7 @@
 <header class="hero"><div class="wrap">
   <div class="eyebrow">System Overview</div>
   <h1>A self-healing multi-agent platform for reproducing &amp; fixing real CVEs</h1>
-  <p class="sub">Arise compares a flat N1 baseline with B4's adaptive Manager hierarchy and B3's direct compact-role topology on SEC-bench CVEs. LLM workers build evidence and code; Host-controlled procedures execute fixed in-run checks; a separate evaluator decides success from fresh replay, provenance, and blinded semantic review.</p>
+  <p class="sub">Arise compares a naive flat N1 control with B4's adaptive hierarchy on SEC-bench CVEs. Both solve the same task and face the same external success criteria. B4 additionally receives Host-controlled in-run procedures; N1 receives no Host mechanical assistance. B3 is the Manager-layer ablation.</p>
   <div class="props">
     <span class="p"><b></b> event-sourced · 42 event types</span>
     <span class="p b"><b></b> hexagonal / ports-and-adapters</span>
@@ -257,57 +258,97 @@
     </figure>
   </section>
 
-  <!-- ============ 02 — EXPERIMENT MATRIX ============ -->
-  <section id="matrix">
-    <div class="kick" data-reveal><b>02</b> / Treatments</div>
-    <h2 data-reveal>N1 baseline, B4 adaptive, B3 direct compact</h2>
-    <p class="intro" data-reveal>The next confirmatory study compares <strong>N1 with B4</strong>. B3 is the direct Manager-layer ablation: the host flattens B4's same compact DAG into nine direct roles. B3 inherits the same role prompts, models, tools, procedures, dependency-scoped source packets, retries, and budgets; only ancestry metadata reflects the omitted Manager.</p>
+  <!-- ============ 02 — EXPERIMENT ============ -->
+  <section id="experiment">
+    <div class="kick" data-reveal><b>02</b> / Experiment</div>
+    <h2 data-reveal>One task contract, two solving systems, one external evaluator</h2>
+    <p class="intro" data-reveal>The confirmatory comparison is <strong>N1 versus B4</strong>. N1 is a deliberately naive OpenHands control: one session, subagents disabled, and procedural dispatch explicitly off. B4 is the complete adaptive treatment. Both must produce the same evidence and are scored by the same post-run evaluator. The estimand is therefore the effect of the <strong>complete B4 system</strong>, not hierarchy in isolation.</p>
     <figure data-reveal>
-      <div class="frame m">
-        <svg viewBox="0 0 1080 330" role="img" aria-label="N1 B3 and B4 experiment treatments">
-          <defs><marker id="m-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
-          <path class="d-edge dashed" d="M360,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
-          <path class="d-edge dashed" d="M720,42 V310" style="stroke:var(--line-2);stroke-width:1"/>
-          <text class="d-role blue" x="180" y="32" text-anchor="middle">N1 · flat baseline</text>
-          <text class="d-role amber" x="540" y="32" text-anchor="middle">B3 · direct compact</text>
-          <text class="d-role green" x="900" y="32" text-anchor="middle">B4 · adaptive target</text>
+      <div class="frame l">
+        <svg viewBox="0 0 1080 520" role="img" aria-label="Fair N1 versus B4 experiment design">
+          <defs>
+            <marker id="m-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker>
+            <marker id="m-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563a8"/></marker>
+            <marker id="m-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+          </defs>
+          <rect class="d-card ink" x="340" y="24" width="400" height="66" rx="6"/>
+          <text class="d-title sm" x="540" y="51" text-anchor="middle">Paired SEC-bench assignment</text>
+          <text class="d-sub" x="540" y="72" text-anchor="middle">same task · same base commit · same semantic objective</text>
 
-          <rect class="d-card blue" x="95" y="126" width="170" height="58" rx="6"/>
-          <text class="d-title sm" x="180" y="151" text-anchor="middle">OpenHands</text>
-          <text class="d-sub" x="180" y="170" text-anchor="middle">one linear session</text>
-          <text class="d-cap" x="180" y="214" text-anchor="middle">Build → Exploit → Fix → Report</text>
+          <path class="d-edge blue" d="M470,90 V124 H266 V148" marker-end="url(#m-b)"/>
+          <path class="d-edge green" d="M610,90 V124 H814 V148" marker-end="url(#m-g)"/>
 
-          <rect class="d-card ink" x="475" y="64" width="130" height="44" rx="6"/>
-          <text class="d-title xs" x="540" y="91" text-anchor="middle">BOSS</text>
-          <path class="d-edge" d="M540,108 V176" marker-end="url(#m-a)"/>
-          <rect class="d-card fill-green" x="385" y="178" width="310" height="58" rx="6"/>
-          <text class="d-title xs" x="540" y="202" text-anchor="middle">9 direct compact roles</text>
-          <text class="d-sub xs" x="540" y="221" text-anchor="middle">same 5 LLM + 4 procedures as B4</text>
-          <text class="d-cap" x="540" y="272" text-anchor="middle">same dependency DAG · Manager layer omitted</text>
-          <text class="d-cap" x="540" y="292" text-anchor="middle">same limits · Manager layer omitted</text>
+          <text class="d-role blue" x="266" y="140" text-anchor="middle">N1 · CONTROL</text>
+          <rect class="d-card fill-blue" x="70" y="154" width="392" height="158" rx="6"/>
+          <text class="d-title sm" x="266" y="184" text-anchor="middle">One naive OpenHands session</text>
+          <text class="d-sub" x="94" y="213">subagents = false</text>
+          <text class="d-sub" x="94" y="236">procedural_dispatch = false</text>
+          <text class="d-sub" x="94" y="259">agent itself runs secb build / repro / patch</text>
+          <text class="d-sub" x="94" y="282">no Host procedure, patch render, repair, or recheck</text>
 
-          <rect class="d-card ink" x="835" y="54" width="130" height="42" rx="6"/><text class="d-title xs" x="900" y="80" text-anchor="middle">BOSS</text>
-          <path class="d-edge" d="M900,96 V126" marker-end="url(#m-a)"/>
-          <rect class="d-card amber" x="805" y="128" width="190" height="44" rx="6"/><text class="d-title xs" x="900" y="155" text-anchor="middle">4 phase Managers</text>
-          <path class="d-edge" d="M900,172 V202" marker-end="url(#m-a)"/>
-          <rect class="d-card fill-green" x="805" y="204" width="190" height="52" rx="6"/>
-          <text class="d-title xs" x="900" y="226" text-anchor="middle">9 compact workers</text>
-          <text class="d-sub xs" x="900" y="244" text-anchor="middle">5 LLM + 4 procedures</text>
-          <path class="d-edge red dashed" d="M995,230 H1032 V150 H997" marker-end="url(#m-a)"/>
-          <text class="d-cap" x="900" y="286" text-anchor="middle">phase failure → Manager-selected same-phase recovery</text>
+          <text class="d-role green" x="814" y="140" text-anchor="middle">B4 · TREATMENT</text>
+          <rect class="d-card fill-green" x="618" y="154" width="392" height="158" rx="6"/>
+          <text class="d-title sm" x="814" y="184" text-anchor="middle">Adaptive hierarchical system</text>
+          <text class="d-sub" x="642" y="213">BOSS → 4 phase Managers → compact roles</text>
+          <text class="d-sub" x="642" y="236">role/model routing + dependency-scoped context</text>
+          <text class="d-sub" x="642" y="259">4 Host procedures with zero-LLM initial attempts</text>
+          <text class="d-sub" x="642" y="282">one bounded agentic repair + Host recheck</text>
+
+          <path class="d-edge blue" d="M266,312 V350 H470"/>
+          <path class="d-edge green" d="M814,312 V350 H610"/>
+          <rect class="d-card ink" x="340" y="330" width="400" height="68" rx="6"/>
+          <text class="d-title sm" x="540" y="357" text-anchor="middle">Common artifact contract</text>
+          <text class="d-sub" x="540" y="378" text-anchor="middle">Build · PoC/repro · RCA · PatchPlan · diff · report</text>
+          <path class="d-edge" d="M540,398 V432" marker-end="url(#m-a)"/>
+
+          <rect class="d-card fill-panel" x="210" y="434" width="660" height="62" rx="6"/>
+          <text class="d-title sm" x="540" y="459" text-anchor="middle">Identical post-run evaluator · measurement only</text>
+          <text class="d-sub" x="540" y="480" text-anchor="middle">fresh replay ∧ safety/provenance ∧ Host regression ∧ blinded semantics</text>
         </svg>
       </div>
-      <div class="legend"><span><i class="li-blue"></i> flat baseline</span><span><i class="li-amber"></i> phase Manager</span><span><i class="li-green"></i> role worker</span><span><i class="li-red"></i> bounded recovery</span></div>
-      <figcaption><b>Fig 2.</b> B4 <code>b4-adaptive-manager-v2</code> and B3 <code>b3-direct-compact-v1</code> share the same host-owned compact route and resolved behavioral settings. B3 omits only the Manager layer; dependency-sink expansion preserves scoped source context across flattening. After a required B4 failure, the Manager may reissue a compact role or add same-phase specialists; the Host expands the remaining same-phase set only when the Manager output is invalid and no safe selection remains.</figcaption>
+      <div class="legend"><span><i class="li-blue"></i> N1 control</span><span><i class="li-green"></i> B4 treatment</span><span><i class="li-ink"></i> held-constant task and measurement</span></div>
+      <figcaption><b>Fig 2.</b> The external Host evaluator runs after either arm finishes, so it is measurement equipment rather than solving assistance. N1 may invoke the same <code>secb</code> commands agentically, but it cannot receive B4's in-run procedure execution or recovery evidence.</figcaption>
     </figure>
+
     <table class="grid" data-reveal>
-      <thead><tr><th>Cell</th><th>Topology</th><th>Use</th><th>Interpretation</th></tr></thead>
+      <thead><tr><th>Dimension</th><th>N1 control</th><th>B4 treatment</th><th>Experimental status</th></tr></thead>
       <tbody>
-        <tr><td class="cell">N1</td><td>one flat OpenHands session</td><td>confirmatory baseline</td><td>naive single-agent performance</td></tr>
-        <tr><td class="cell">B4</td><td>BOSS → four phase Managers → compact roles; LLM recovery after required failure</td><td>confirmatory treatment</td><td>adaptive hierarchical system</td></tr>
-        <tr><td class="cell">B3</td><td>BOSS → nine direct compact roles</td><td>development ablation</td><td>Manager-layer omission</td></tr>
+        <tr><td class="cell">Assignment</td><td>same task, base commit, and replicate</td><td>same task, base commit, and replicate</td><td>held constant by pairing</td></tr>
+        <tr><td class="cell">Objective</td><td>Build → Exploit → Fix → Report</td><td>Build → Exploit → Fix → Report</td><td>held constant</td></tr>
+        <tr><td class="cell">Evidence</td><td>same canonical artifacts, including RCA and PatchPlan</td><td>same canonical artifacts</td><td>held constant</td></tr>
+        <tr><td class="cell">Solving topology</td><td>one OpenHands session; no subagents</td><td>BOSS, Managers, and role workers</td><td>treatment difference</td></tr>
+        <tr><td class="cell">Models</td><td>one <code>gpt-5.3-codex</code> worker</td><td><code>gpt-5.4</code> orchestration plus routed mini/Codex workers</td><td>treatment difference</td></tr>
+        <tr><td class="cell">In-run mechanics</td><td>none from Host; agent self-runs <code>secb</code></td><td>four Host procedures and bounded repair/recheck</td><td>treatment difference</td></tr>
+        <tr><td class="cell">External verdict</td><td>same frozen evaluator</td><td>same frozen evaluator</td><td>held constant</td></tr>
+        <tr><td class="cell">Inference</td><td colspan="2">paired difference in combined success, B4 minus N1</td><td>full-system effect; B3 isolates the Manager layer</td></tr>
       </tbody>
     </table>
+
+    <table class="grid" data-reveal>
+      <thead><tr><th>Phase</th><th>Common solver artifacts</th><th>Measurement role</th></tr></thead>
+      <tbody>
+        <tr><td class="cell">Build</td><td><code>base_commit_hash</code>, <code>/src/build.sh</code>, <code>repo_changes.diff</code>, <code>binary_paths.txt</code></td><td>reconstruct and identify the vulnerable build</td></tr>
+        <tr><td class="cell">Exploit</td><td><code>poc_path.txt</code>, selected PoC, <code>repro.sh</code></td><td>fresh pre-patch replay input</td></tr>
+        <tr><td class="cell">Analysis</td><td><code>root_cause_analysis.txt</code>, <code>patch_plan.json</code></td><td>common causal and semantic evidence</td></tr>
+        <tr><td class="cell">Fix</td><td><code>model_patch.diff</code></td><td>fresh patch/build/post-patch replay input</td></tr>
+        <tr><td class="cell">Diagnostics</td><td><code>exploit_validation_results.txt</code>, <code>patch_validation_results.txt</code></td><td>required for completeness; their solver-authored verdict content is diagnostic only</td></tr>
+        <tr><td class="cell">Report</td><td><code>security_report.md</code></td><td>evidence synthesis; never an override</td></tr>
+      </tbody>
+    </table>
+    <p data-reveal><code>patch_plan.json</code> contains solver-authored edit intent only and rejects unknown fields. B4 privately binds both its validated normalized hash and exact raw bytes to the independently frozen replay identity in Host-owned evidence; that identity is not required from N1 and does not enter the blinded semantic packet.</p>
+
+    <table class="grid" data-reveal>
+      <thead><tr><th>Required success gate</th><th>Explicit pass criterion</th><th>Authority</th><th>N1 = B4?</th></tr></thead>
+      <tbody>
+        <tr><td class="cell">Artifact completeness</td><td>every common deliverable exists and is non-vacuous except <code>repo_changes.diff</code>; PatchPlan satisfies the strict common schema</td><td>arm-independent mechanical contract</td><td>yes</td></tr>
+        <tr><td class="cell">Mechanical replay</td><td>exact frozen crash signature reproduced 3/3; patch applies/builds and primary patched replay passes 3/3 in fresh containers</td><td>external command evidence</td><td>yes</td></tr>
+        <tr><td class="cell">Safety + provenance</td><td>sealed and hashed artifacts; protected paths untouched; six distinct containers; identical pre/post task and base; no timeout, signal, assertion, core, or sanitizer after patch</td><td>external safety floor</td><td>yes</td></tr>
+        <tr><td class="cell">Host regression</td><td>frozen arm-independent plan is available and every required command passes in a fresh patched container</td><td>external regression runner</td><td>yes</td></tr>
+        <tr><td class="cell">Semantic</td><td>all three blinded seats return valid votes; at least two accept the causal defect, repair layer, evidence consistency, scope, and regression risk</td><td>pinned 2-of-3 panel</td><td>yes</td></tr>
+        <tr><td class="cell">Final</td><td><code>mechanical AND safety AND host regression AND semantic</code></td><td>combined evaluator</td><td>yes</td></tr>
+      </tbody>
+    </table>
+    <p data-reveal><strong>B3 is not a third confirmatory arm.</strong> It gives B4's same compact roles and Host procedures directly to the BOSS, omitting only phase Managers, and is used to study that layer. See the standalone <a href="n1-b4-experiment-report.html">N1 vs B4 experiment design report</a> for the complete protocol, artifact contract, analysis rule, and validity limits.</p>
   </section>
 
   <!-- ============ 03 — SYSTEM ARCHITECTURE ============ -->
@@ -465,7 +506,7 @@
   <section id="roles">
     <div class="kick" data-reveal><b>06</b> / Worker architecture</div>
     <h2 data-reveal>Execution mechanism and work type are separate</h2>
-    <p class="intro" data-reveal><strong>Mechanical vs LLM</strong> describes execution. <strong>Coding, reasoning, hybrid, and synthesis</strong> describe the work. “Thinking” adds no distinct category. The implemented <code>worker.model_overrides</code> map routes every reasoning, hybrid, and synthesis role to GPT-5.3 Codex.</p>
+    <p class="intro" data-reveal><strong>Mechanical vs LLM</strong> describes execution. <strong>Coding, reasoning, hybrid, and synthesis</strong> describe the work. This role taxonomy applies to B3/B4. N1 instead uses one GPT-5.3 Codex OpenHands worker for the complete phase contract and receives neither role routing nor procedure evidence.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 300" role="img" aria-label="Mechanical versus LLM worker routing">
@@ -583,9 +624,9 @@
 
   <!-- ============ 07 — PROCEDURE TIER ============ -->
   <section id="proc">
-    <div class="kick" data-reveal><b>08</b> / Deterministic procedures</div>
+    <div class="kick" data-reveal><b>08</b> / B4 treatment mechanics</div>
     <h2 data-reveal>Deterministic Host gates with one bounded repair</h2>
-    <p class="intro" data-reveal>Four roles have frozen command and transformation contracts. With <code>procedural_dispatch</code> enabled, each Arise Host procedure attempt uses <strong>zero LLM turns</strong>. An initial Host failure permits exactly one LLM-backed repair and, if that repair completes, exactly one Host recheck. “Host” means the orchestrator process, not a human. Arise captures argv evidence and computes the in-run verdict; an agent-written <code>VERDICT: PASS</code> is never authoritative. Commands still execute in the run's mutable shared worker container, so fresh external replay remains the confirmatory authority.</p>
+    <p class="intro" data-reveal>This section applies to B3/B4 when <code>procedural_dispatch</code> is enabled. Four roles have frozen command and transformation contracts, and each initial Host attempt uses <strong>zero LLM turns</strong>. An initial failure permits exactly one LLM-backed repair and, if that repair completes, exactly one Host recheck. N1 pins <code>procedural_dispatch=false</code>, follows the ordinary OpenHands path, and cannot receive procedure evidence, Host failure feedback, patch rendering, or a Host recheck. “Host” means the orchestrator process, not a human; fresh external replay remains the confirmatory authority.</p>
     <figure data-reveal>
       <div class="frame m">
         <svg viewBox="0 0 1080 690" role="img" aria-label="Procedure lifecycle with one initial Host attempt, one agentic repair, and one Host recheck">
@@ -679,7 +720,7 @@
           <!-- flag note -->
           <rect class="d-card fill-panel" x="60" y="382" width="270" height="154" rx="6"/>
           <text class="d-title xs" x="78" y="406" text-anchor="start">procedural_dispatch</text>
-          <text class="d-sub" x="78" y="428" text-anchor="start">default OFF → NullProcedureExecutor</text>
+          <text class="d-sub" x="78" y="428" text-anchor="start">N1: explicit OFF → no procedure executor</text>
           <text class="d-sub" x="78" y="448" text-anchor="start">→ match/resolve return None/False</text>
           <text class="d-sub" x="78" y="468" text-anchor="start">→ ordinary agentic path only</text>
           <text class="d-cap" x="195" y="504" text-anchor="middle">parent hints, refs, and params</text>
@@ -709,14 +750,14 @@
   <!-- ============ 09 — EVALUATOR ============ -->
   <section id="evaluator">
     <div class="kick" data-reveal><b>09</b> / Success and judges</div>
-    <h2 data-reveal>Mechanical truth first; semantic judgment stays separate</h2>
-    <p class="intro" data-reveal>The authoritative evaluator has no human queue or override. It seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
+    <h2 data-reveal>One post-run success contract for both arms</h2>
+    <p class="intro" data-reveal>Evaluation begins only after the solver run is closed and sends no repair feedback to N1 or B4. The evaluator seals objective execution facts before asking models about root-cause and patch semantics. Judges cannot rescue a timeout, wrong crash, sanitizer suppression, failed build, or regression.</p>
     <figure data-reveal>
       <div class="frame l">
         <svg viewBox="0 0 1080 570" role="img" aria-label="Mechanical evaluator and automated semantic judge architecture">
           <defs><marker id="e-a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9a9aa1"/></marker></defs>
           <text class="d-role green" x="50" y="32">mechanical plane</text>
-          <rect class="d-card ink" x="50" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="155" y="78" text-anchor="middle">Frozen input bundle</text><text class="d-sub xs" x="155" y="98" text-anchor="middle">base · PoC · oracle · patch</text>
+          <rect class="d-card ink" x="50" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="155" y="78" text-anchor="middle">Frozen input bundle</text><text class="d-sub xs" x="155" y="98" text-anchor="middle">common artifacts · base · PoC · patch</text>
           <path class="d-edge" d="M260,85 H310" marker-end="url(#e-a)"/>
           <rect class="d-card blue" x="312" y="54" width="210" height="62" rx="6"/><text class="d-title xs" x="417" y="78" text-anchor="middle">Fresh replay</text><text class="d-sub xs" x="417" y="98" text-anchor="middle">pre×3 · apply/build · post×3</text>
           <path class="d-edge" d="M522,85 H572" marker-end="url(#e-a)"/>
@@ -726,9 +767,9 @@
 
           <rect class="d-card fill-red" x="50" y="152" width="980" height="64" rx="6"/>
           <text class="d-title xs" x="70" y="178">Non-overridable failures</text>
-          <text class="d-sub" x="70" y="198">timeout · signal · assertion abort · exit outside 0/frozen oracle · wrong sanitizer/access/top-frame · apply/build/repro failure · regression failure</text>
+          <text class="d-sub" x="70" y="198">missing/vacuous artifact · invalid PatchPlan · timeout · signal · assertion · wrong oracle · apply/build/repro or regression failure</text>
 
-          <text class="d-role blue" x="50" y="268">semantic plane · only after mechanical eligibility</text>
+          <text class="d-role blue" x="50" y="268">semantic plane · only after mechanical, safety, and regression pass</text>
           <rect class="d-card ink" x="50" y="290" width="260" height="78" rx="6"/>
           <text class="d-title xs" x="180" y="315" text-anchor="middle">Canonical blinded packet</text>
           <text class="d-sub xs" x="180" y="337" text-anchor="middle">oracle + raw replay + RCA + PatchPlan</text>
@@ -746,7 +787,7 @@
           <rect class="d-card fill-green" x="920" y="316" width="110" height="66" rx="6"/><text class="d-title xs" x="975" y="341" text-anchor="middle">semantic</text><text class="d-sub xs" x="975" y="361" text-anchor="middle">PASS / FAIL</text>
 
           <rect class="d-card ink" x="264" y="488" width="552" height="58" rx="6"/>
-          <text class="d-title sm" x="540" y="512" text-anchor="middle">success = mechanical ∧ safety ∧ semantic ∧ regression</text>
+          <text class="d-title sm" x="540" y="512" text-anchor="middle">success = mechanical ∧ safety ∧ regression ∧ semantic</text>
           <text class="d-sub" x="540" y="532" text-anchor="middle">immutable bundle: prompts · responses · raw evidence · retries · hashes · timestamps</text>
         </svg>
       </div>
@@ -763,6 +804,17 @@
         <tr><td>Evaluator completeness</td><td>reported separately from cost completeness; an incomplete assignment remains an ITT failure and blocks the superiority decision</td></tr>
       </tbody>
     </table>
+    <table class="grid" data-reveal>
+      <thead><tr><th>Signal</th><th>Why it is not authoritative success</th></tr></thead>
+      <tbody>
+        <tr><td><code>WorkCompleted</code> or runner exit zero</td><td>records solver termination, not fresh external correctness</td></tr>
+        <tr><td>agent-authored <code>VERDICT: PASS</code></td><td>required diagnostic evidence can be mistaken or fabricated</td></tr>
+        <tr><td>B4 in-run procedure PASS</td><td>comes from the mutable solving container and is treatment feedback, not the arm-independent endpoint</td></tr>
+        <tr><td>file presence alone</td><td>does not establish causal, executable, or safe content</td></tr>
+        <tr><td>strict/generous patch modes</td><td>sensitivity analyses; the configured primary mode determines mechanical success</td></tr>
+        <tr><td>worker-authored regression prose</td><td>cannot replace the frozen Host regression plan and execution evidence</td></tr>
+      </tbody>
+    </table>
   </section>
 
   <!-- ============ 10 — RELEASE GATE ============ -->
@@ -773,6 +825,10 @@
     <table class="grid" data-reveal>
       <thead><tr><th>Requirement</th><th>Current evidence</th><th>Blocking action</th></tr></thead>
       <tbody>
+        <tr><td>N1 control isolation</td><td>both N1 configs explicitly disable procedural dispatch and subagents; loaders reject drift</td><td>prove the launch contract in focused and pilot tests</td></tr>
+        <tr><td>Common submission contract</td><td>N1 and B4 require root-cause analysis, PatchPlan, patch, reproducer, diagnostic verdicts, and report</td><td>verify rendered prompts and evaluator mirror remain synchronized</td></tr>
+        <tr><td>Private B4 replay binding</td><td>solver PatchPlan carries edit intent; B4 binds its normalized hash and exact raw bytes to replay identity in Host-private evidence</td><td>prove schema, raw-mutation, and replay-integrity tests remain fail-closed</td></tr>
+        <tr><td>Claim boundary</td><td>documentation specifies a complete B4-system effect; B3 is the Manager-layer ablation</td><td>freeze the same wording in the final preregistration</td></tr>
         <tr><td>Zero-human semantic gate</td><td>panel is <code>claude-opus-4-8</code> + <code>gpt-5.5-2026-04-23</code> + <code>gemini/gemini-3.5-flash</code>; human audit queue removed</td><td>prove live three-seat structured responses; fund Anthropic seat</td></tr>
         <tr><td>Per-role model routing</td><td><code>worker.model_overrides</code> wired through config/bootstrap/OpenHands</td><td>none in code; freeze role map in study manifest</td></tr>
         <tr><td>Prompt-treatment agreement</td><td><code>b4-adaptive-manager-v2</code> and <code>b3-direct-compact-v1</code> match the host-owned initial route and LLM-only recovery design</td><td>validate real DB-backed recovery provenance before launch</td></tr>

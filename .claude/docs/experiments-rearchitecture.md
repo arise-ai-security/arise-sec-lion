@@ -11,7 +11,7 @@ treatment identifiers. Each study selects behavior only through its YAML configu
 
 | Cell | Treatment | Purpose |
 |---|---|---|
-| N1 | `n1-openhands-linear`: one flat OpenHands session | naive baseline |
+| N1 | `n1-openhands-linear`: one flat OpenHands session; OpenHands subagents and Host procedural dispatch explicitly disabled | naive control |
 | B4 | `b4-adaptive-manager-v2`: BOSS -> four host-created phase Managers -> host-created compact role workers; after a required failure the LLM Manager proposes same-phase recovery roles and failure-specific instructions | adaptive hierarchical treatment |
 | B3 | `b3-direct-compact-v1`: BOSS -> the same nine compact roles directly; Manager layer omitted | direct manager-layer ablation |
 
@@ -24,7 +24,23 @@ are not byte-identical. Dependency-scoped source packets remain equivalent: grou
 predecessors expand to their terminal leaf sinks before entry workers receive context.
 
 N1 remains flat. Runtime source does not branch on N1/B3/B4 study names or treatment
-identifiers.
+identifiers. Its committed configs and confirmatory launch validation fail closed unless
+the mode is flat, OpenHands is selected, subagents are disabled, and procedural dispatch
+is explicitly false.
+
+### Confirmatory comparison boundary
+
+N1 and B4 share the same solver-visible CVE context, domain goals, quality requirements,
+canonical artifact contract, and post-run combined evaluator. N1 performs every in-run
+build, reproduction, analysis, patch, and validation action through its normal OpenHands
+tools. It receives no Host procedure execution, patch rendering, procedure failure digest,
+or Host recheck. B4 deliberately adds those mechanics along with hierarchy, role/model
+routing, scoped context, and recovery.
+
+Therefore N1 versus B4 estimates the effect of the **complete B4 system**, not hierarchy
+alone. Full prompts are not byte-identical because the execution systems differ; shared
+phase semantics and artifacts are the controlled contract. B3 versus B4 is the
+Manager-layer ablation.
 
 ### B4 adaptive route
 
@@ -60,13 +76,16 @@ nine-role compact route directly from the host, without phase-Manager role selec
 
 ### Worker taxonomy and model policy
 
-Use two axes:
+For B3/B4 roles, use two axes:
 
 1. **Execution mechanism:** LLM or deterministic host procedure.
 2. **Task character:** coding/execution, reasoning, hybrid, or synthesis.
 
 `host procedure` means deterministic code executed by the trusted Arise process. It is
 not a person, review queue, or other human-in-the-loop step.
+
+N1 has no procedure-backed role. Its single OpenHands worker uses `gpt-5.3-codex`,
+interprets the common phase contract, and issues `secb` commands itself.
 
 `thinking` is not a separate category from reasoning. The role-level source of truth is
 `plugins/security/roles.py`; the full classification table is in
@@ -134,16 +153,19 @@ No agent-authored `VERDICT: PASS`, `WorkCompleted`, report sentence, or file pre
 sufficient. Authoritative success is:
 
 ```text
-success = mechanical_replay
+success = official_mechanical
        AND safety_and_provenance
-       AND semantic_panel
-       AND regression_gate
+       AND host_regression
+       AND semantic_accepted
 ```
 
 All four terms are fail-closed and use the same frozen evaluator across arms.
 
 #### Mechanical replay
 
+- Require every common solver deliverable in both arms to be present and non-vacuous,
+  except `repo_changes.diff`, which may be empty. `patch_plan.json` must pass the strict
+  arm-independent schema before semantic judging can run.
 - Accept a declared PoC even when its file is zero bytes; presence and path resolution,
   not non-empty content, determine eligibility.
 - Start each evaluation from a fresh frozen base image/worktree.
@@ -171,8 +193,10 @@ All four terms are fail-closed and use the same frozen evaluator across arms.
   upstream PoC and patch evaluators use different artifact transports, so do not claim
   byte-identical PoC execution without additional adapter evidence.
 - Reject path escape, edits to the canonical protected set, stale workspaces, and missing
-  command evidence. PatchPlan validation and literal rendering are enforced by the B3/B4
-  in-run Patch-Applier procedure; the arm-independent authoritative evaluator supplies the
+  command evidence. Both arms author the same PatchPlan edit-intent schema. B3/B4's in-run
+  Patch-Applier validates and renders it; the Host independently binds the approved plan
+  hash to its frozen replay identity in private approval evidence. Replay identity is not a
+  solver-authored PatchPlan field. The arm-independent authoritative evaluator supplies the
   plan and diff to semantic review but does not mechanically compare them.
 - Retain the cost of failed, timed-out, or incomplete runs. Missing usage is `missing`,
   never zero.
@@ -197,7 +221,7 @@ Every judge receives the identical blinded packet:
 
 - frozen CVE oracle fields needed for root-cause comparison, excluding the gold patch;
 - raw host replay evidence and derived crash signatures;
-- root-cause analysis, approved PatchPlan, rendered diff, patch/rebuild/replay evidence,
+- root-cause analysis, solver-authored PatchPlan, rendered diff, patch/rebuild/replay evidence,
   regression evidence, and final report excerpts;
 - no cell, topology, worker model, treatment version, cost, or arm-identifying path.
 
@@ -235,6 +259,10 @@ identifier, timestamps, retry history, and aggregation result.
 
 | Status required | Gate |
 |---|---|
+| PASS | both N1 configs explicitly disable subagents and procedural dispatch; definition and confirmatory launch validation reject drift |
+| PASS | N1 and B4 require the same root-cause analysis, PatchPlan, patch, reproducer, diagnostic verdicts, and report artifacts |
+| PASS | B4 privately binds each approved plan's normalized hash and exact raw bytes to the frozen replay identity without changing the common solver PatchPlan schema |
+| PASS | preregistration and reports identify N1-versus-B4 as a complete-system effect and reserve hierarchy attribution for B3-versus-B4 |
 | PASS | prompts agree with the B4 Manager-recovery and B3 direct-compact policies |
 | PASS | generic per-role `model_overrides` selects the documented models and is covered by adapter/config tests |
 | PASS | four host procedures and their bounded repair lifecycle (initial Host attempt, one agentic repair, then one Host recheck after completed repair) are covered by timeout, signal, nonzero-exit, zero-byte-PoC, terminal-recheck, and evidence-integrity tests |
@@ -266,6 +294,10 @@ Landed (verify against tests, not this list alone):
 9. All 19 candidate regression plans use project-specific executable probes, are
    validated on base and gold-patched fresh containers, and are bound by a plan-set
    SHA-256; they must be regenerated for the replacement cohort.
+10. N1's committed configurations explicitly disable procedural dispatch and subagents;
+    flat-mode and confirmatory launch contracts reject procedure drift.
+11. Root-cause analysis and the solver-authored PatchPlan are common N1/B4 artifacts;
+    B4's replay-identity binding remains Host-private approval evidence.
 
 Still open before confirmatory launch:
 

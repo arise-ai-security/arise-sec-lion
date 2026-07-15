@@ -40,6 +40,23 @@ Dashboard at http://localhost:8000.
 
 ## 3. Build only the images this study needs
 
+For the 300-instance N1 roster, publish one shared toolchain instead of building
+300 independent overlays:
+
+```bash
+deployment/build-secbench-toolchain.sh cheshire0814
+deployment/publish-secbench-tools.sh cheshire0814 \
+  --tool-image cheshire0814/secb-tools:toolchain-focal-amd64-v1 \
+  --parallel 8
+```
+
+The first command performs the heavy installation once. The second creates the
+CVE tags in Docker Hub by reusing those exact layers and each `hwiwonlee` base;
+it does not download the image roster to the host. Pass `--force` when replacing
+older independently built tags so one experiment uses one toolchain digest.
+
+For small local studies, `deployment/build-all-images.sh` remains available.
+
 `deployment/build-all-images.sh` accepts fixture paths as positional args and skips images already on disk. Feed it the fixtures listed in your study's `dataset.yaml`:
 
 ```bash
@@ -142,8 +159,6 @@ Dashboard: http://localhost:8000.
 The full state is **Postgres `events`** (source of truth) + **`runs/<run_id>/`** (deliverables).
 
 ```bash
-set -a && source deployment/.env && set +a
-
 # Sender
 scripts/dump_events.sh                                          # events-YYYYMMDDTHHMMSSZ.sql.gz
 tar -czf "runs-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" runs/
@@ -163,7 +178,7 @@ scripts/restore_events.sh events-*.sql.gz                       # fresh DB
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | Bulk build: `pull access denied`                     | Fixture's default `hwiwonlee/…` image doesn't exist. Author a `songtli/…` override (`/secbench-fixture` skill). |
 | `run_matrix`: stale code / docker exec error         | `docker compose --profile local up -d --build app` to rebuild the app container.                 |
-| `dump_events.sh: POSTGRES_PASSWORD must be set`      | `set -a && source deployment/.env && set +a` first.                                              |
+| `dump_events.sh`: `postgres-main` is not running    | `docker compose -f deployment/docker-compose.yml --profile local up -d db`.                      |
 | `restore_events.sh` aborts on existing rows          | Pass `--truncate` (wipe + replace) or `--append` (merge).                                        |
 | Worker can't reach Ollama on Linux                   | `extra_hosts: ["host.docker.internal:host-gateway"]` is already in `deployment/docker-compose.yml`. |
 | `--parallel` saturates the host                      | See `agent-docs/parallel-20-host-saturation-diagnosis.md`. Drop to `--parallel 2`.               |

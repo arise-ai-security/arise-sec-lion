@@ -47,7 +47,7 @@ SEC-bench's Exploit→Fix invariant is exactly *"crash before patch, no crash af
 
 ## 3. Architecture: forest as a first-class external runner
 
-arise's harness was built for exactly this. The runner registry docstring (`experiments/shared/runners/__init__.py:1-7`) reserves the path for *"external research baselines that can't be expressed as a config of our system."* Today there is **one** runner (`arise`); "OpenHands-linear" is **not** a separate runner — it is the `arise` runner with `worker.tool: openhands` config (`experiments/n1-openhands-linear/configs/N1-openhands-linear.yaml`). **Forest would be the first true external runner.**
+arise's harness was built for exactly this. The runner registry docstring (`experiments/shared/runners/__init__.py:1-7`) reserves the path for *"external research baselines that can't be expressed as a config of our system."* Today there is **one** runner (`arise`); "OpenHands-linear" is **not** a separate runner — it is the `arise` runner with `worker.tool: openhands` config (`experiments/n1-secbench-full/configs/N1-openhands-linear.yaml`). **Forest would be the first true external runner.**
 
 ### 3.1 Runner contract (`experiments/shared/runners/__init__.py:25-41`)
 ```python

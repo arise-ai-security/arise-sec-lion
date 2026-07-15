@@ -122,6 +122,8 @@ arise-sec-lion/
 │   ├── secbench-tools.Dockerfile  # SEC-bench tooling image
 │   ├── docker-compose.yml         # Profiles: local/dev/prod/test
 │   └── *.json                     # CVE instance fixtures
+├── experiments/                   # Study definitions and experiment-specific operations
+│   └── n1-secbench-full/          # Idempotent prepare, sharded run, and export commands
 ├── scripts/                       # Dev tooling scripts
 │   ├── check_architecture_boundaries.py  # Pre-commit: rejects core/ -> infrastructure/ imports
 │   ├── seed_demo_events.py        # Seed demo data into event store

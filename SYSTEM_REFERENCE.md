@@ -241,7 +241,8 @@ Active experiment treatments are N1 flat, B4 `b4-adaptive-manager-v2`, and B3
 ```
 FLAT ARM (single agent runs all four phases in order)
    one WORKER ── Build ─▶ Exploit ─▶ Fix ─▶ Report
-   no manager / sibling / handoff vocabulary
+   OpenHands subagents OFF · Host procedural dispatch OFF
+   no manager / sibling / handoff / procedure vocabulary
 
 HIERARCHICAL B4 (BOSS → MANAGER → WORKER)
                 ┌──────── BOSS ────────┐         decomposition + verification
@@ -256,11 +257,14 @@ DIRECT-COMPACT B3 (BOSS → WORKER)
    → 9 direct role workers (5 LLM + 4 host procedures), no Managers
 ```
 
-Both arms share the **same phase contracts** (§II.6); the hierarchical arm adds role
-decomposition on top. Worker leaves carry a `[Phase]`/`[Role]` bracket that routes them
-to the right phase prompt (bracket-first detection prevents a Fixer leaf — which
-legitimately mentions "exploit"/"repro" — from rendering the Exploiter prompt).
-— `plugins/security/prompt_strategy.py:57-100`
+N1 and B4 share the same domain goals and canonical artifact contract (§II.6), but not
+the same full prompt or assistance. B4 adds hierarchy, role/model routing, scoped context,
+four Host procedures, and bounded procedure/Manager recovery; N1 self-executes the phase
+contract through one OpenHands session. N1-versus-B4 therefore estimates the complete
+B4-system effect. B3-versus-B4 isolates the Manager layer. Worker leaves carry a
+`[Phase]`/`[Role]` bracket that routes them to the right prompt (bracket-first detection
+prevents a Fixer leaf — which legitimately mentions "exploit"/"repro" — from rendering
+the Exploiter prompt). — `plugins/security/prompt_strategy.py:57-100`
 
 ## II.4 — The container runtime (`docker_runtime.py`) lifecycle
 
@@ -378,13 +382,17 @@ FLAT  (extend_flat_prompt, prompt_strategy.py:337-364)
 
 HIER  (extend_worker_prompt, prompt_strategy.py:247-335)  — per worker leaf
   _secb_runtime_contract.j2 → cve.j2 (phase=branch) → worker.j2
-        → worker/<branch>.j2  ──include──▶ phases/<branch>.j2  + role overlay steps
+        → catalog role: worker/role_contract.j2 → worker/roles/<role>.j2
+        → whole-phase fallback: worker/<branch>.j2 ──include──▶ phases/<branch>.j2
         → (optional) tools.j2
 ```
 
-`phases/{build,exploit,fix,report}.j2` are `{% include %}`-ed by **both** arms and
-rendered with identical context, so each phase's Goal + Deliverables + Validation block
-is **byte-identical across arms** — proven by
+`phases/{build,exploit,fix,report}.j2` define the topology-neutral contract used by the
+flat arm and whole-phase worker fallbacks. Catalog role workers receive focused role
+templates, but their owned outputs derive from the same `REQUIRED_FILES`,
+`VALIDATION_REQUIRED`, and role catalog. Prompt-normalization tests prove that the shared
+phase blocks are byte-identical wherever they are rendered and that the flat prompt has no
+Host-procedure or tree-coordination language —
 `plugins/security/tests/test_prompt_normalization.py:106-148`. This is why the Builder-
 Baseline and Fixer-Diff-Baseline procedures (which keep `model_patch.diff` free of
 Builder hunks) live in the phase partials, not the worker overlays — so the flat arm
@@ -399,7 +407,7 @@ INJECTED (allowed)                              FORBIDDEN (never rendered)
                           phase_commands,             • patch          (gold fix)
                           required_files,             • candidate_fixes (fix bodies)
                           validation_required,        • secb_sh        (golden repro())
-                          hierarchical_only, …        • bug_report     (answer-bearing report)
+                          root-cause fields, …        • bug_report     (answer-bearing report)
                                                   cve_instance.py:15-17, 106-110
 ```
 
@@ -541,24 +549,24 @@ graph LR
 
 ## III.3 — Role catalog (full)
 
-| Role | Phase | Req? | Hier-only artifact? | Produces |
+| Role | Phase | Req? | Common contract output? | Produces |
 |---|---|---|---|---|
-| Build-Setup | Builder | ✅ | — | `base_commit_hash` |
-| Build-Executor | Builder | ✅ | — | `build.sh`, `repo_changes.diff`, `binary_paths.txt` |
+| Build-Setup | Builder | ✅ | **yes** | `base_commit_hash` |
+| Build-Executor | Builder | ✅ | **yes** | `build.sh`, `repo_changes.diff`, `binary_paths.txt` |
 | Build-Verifier | Builder | ✅ | — | — (host procedure when enabled) |
 | PoC-Researcher | Exploiter | ✅ | — | — (evidence: `poc_operation_map.txt`) |
 | Data-Flow-Analyst | Exploiter | ✅ | — | — |
 | PoC-Tester | Exploiter | ✅ | — | — |
 | Forward-Instrumentator | Exploiter | ✅ | — | — (evidence: `forward_instrumentation.log`) |
-| Repro-Creator | Exploiter | ✅ | — | `poc_path.txt`, `repro.sh` |
-| Exploit-Validator | Exploiter | ✅ | — | `exploit_validation_results.txt` |
+| Repro-Creator | Exploiter | ✅ | **yes** | `poc_path.txt`, `repro.sh` |
+| Exploit-Validator | Exploiter | ✅ | **yes** | `exploit_validation_results.txt` |
 | Root-Cause-Analyst | Fixer | ✅ | **yes** | `root_cause_analysis.txt`, `patch_plan.json` |
 | Candidate-Reviewer | Fixer | ✅ | — | — |
 | Regression-Tester | Fixer | ✅ | — | — |
-| Patch-Applier | Fixer | ✅ | — | `model_patch.diff` (host-rendered from the approved PatchPlan) |
-| Patch-Validator | Fixer | ✅ | — | `patch_validation_results.txt` |
+| Patch-Applier | Fixer | ✅ | **yes** | `model_patch.diff` (Host-rendered from the approved PatchPlan when procedures are enabled) |
+| Patch-Validator | Fixer | ✅ | **yes** | `patch_validation_results.txt` |
 | Fix-Aggregator | Fixer | ⬜ | — | `fix_summary.md` |
-| Reporter | Reporter | ✅ | — | `security_report.md` |
+| Reporter | Reporter | ✅ | **yes** | `security_report.md` |
 
 The Root-Cause-Analyst emits a structured block with five keys
 (`ROOT_CAUSE_BLOCK_KEYS`, `deliverables.py:170`): `PROPOSED_FIX_SITE`,
@@ -595,10 +603,11 @@ equivalent because grouping predecessors expand to their current terminal leaf s
 
 ## III.4 — Artifact contract
 
-Status legend: **REQUIRED** = in `REQUIRED_FILES`; **VALIDATION** = verdict file in
-`VALIDATION_REQUIRED` (mandatory on any path that includes the phase); **HIER-ONLY** =
-mandatory only when the phase is decomposed; **EVIDENCE** = path constant exists but is
-*not* mandated (lives in a role `insight`, not `produces`).
+Status legend: **REQUIRED** = in `REQUIRED_FILES` for every solver arm;
+**VALIDATION** = in-run diagnostic file in `VALIDATION_REQUIRED` (its non-vacuous
+presence is mandatory for the arm-independent artifact-completeness subgate, but its
+solver-authored verdict content is not authoritative); **EVIDENCE** = path constant exists
+but is *not* mandated (lives in a role `insight`, not `produces`).
 
 | Artifact (`/testcase/…` unless noted) | Producer | Status | Mechanical meaning |
 |---|---|---|---|
@@ -608,11 +617,11 @@ mandatory only when the phase is decomposed; **EVIDENCE** = path constant exists
 | `binary_paths.txt` | Build-Executor | REQUIRED | Exact Builder-produced executable path(s), one per line |
 | `poc_path.txt` | Repro-Creator | REQUIRED | Pointer to the selected PoC (by content/CVE match, **not** a `poc*` glob) |
 | `repro.sh` | Repro-Creator | REQUIRED | The `secb repro` backing script; invokes the Builder binary |
-| `exploit_validation_results.txt` | Exploit-Validator | VALIDATION | Verdict block (PASS/FAIL + expected/observed sanitizer error, crash fn, determinism) |
-| `root_cause_analysis.txt` | Root-Cause-Analyst | HIER-ONLY | 5-key fix-site block (mandatory only when Fixer is decomposed) |
-| `patch_plan.json` | Root-Cause-Analyst | HIER-ONLY | exact structured edit plan validated and approved by the host |
-| `model_patch.diff` | Patch-Applier | REQUIRED | host-rendered git-apply-able diff from the approved PatchPlan |
-| `patch_validation_results.txt` | Patch-Validator | VALIDATION | Verdict block (apply/build status + pre/post sanitizer + 3/3 no-crash) |
+| `exploit_validation_results.txt` | Exploit-Validator / flat solver | VALIDATION | In-run diagnostic block (PASS/FAIL + expected/observed sanitizer error, crash fn, determinism) |
+| `root_cause_analysis.txt` | Root-Cause-Analyst / flat solver | REQUIRED | Evidence-grounded causal chain, two-site comparison, and exact 5-key fix-site block |
+| `patch_plan.json` | Root-Cause-Analyst / flat solver | REQUIRED | Exact structured edit plan; solver-authored and independent of Host replay identity |
+| `model_patch.diff` | Patch-Applier / flat solver | REQUIRED | Git-apply-able diff matching the PatchPlan; B4 can render it mechanically, N1 edits and diffs source itself |
+| `patch_validation_results.txt` | Patch-Validator / flat solver | VALIDATION | In-run diagnostic block (apply/build status + pre/post sanitizer + 3/3 no-crash) |
 | `fix_summary.md` | Fix-Aggregator | EVIDENCE (optional role) | Concise validated fix narrative |
 | `security_report.md` | Reporter | REQUIRED | Non-empty evidence-based report |
 | `poc_operation_map.txt`, `forward_instrumentation.log`, `instrumentation_output.txt` | — (role insight only) | EVIDENCE | Novelty/evidence outputs, not key-file failures |
@@ -677,7 +686,7 @@ success = official_mechanical
 
 | Layer | As-built implementation | Remaining gap before confirmatory launch |
 |---|---|---|
-| Official mechanical | six independent fresh containers (PoC×3 + patch×3); exact crash-signature oracle on class / access / top frame; medium primary, strict/generous sensitivity | live image availability for every cohort instance |
+| Official mechanical | identical non-vacuous common-artifact contract for both arms (`repo_changes.diff` may be empty; PatchPlan must satisfy the strict schema), plus six independent fresh containers (PoC×3 + patch×3), exact crash-signature oracle on class / access / top frame, and medium primary with strict/generous sensitivity | live image availability for every cohort instance |
 | Safety/provenance | canonical protected paths, current artifact hashes, replay target/base identity; **`fresh_base` proven from six distinct `container_id`s** (never asserted); each `ReferenceReplayResult` carries `replay_id`, `container_id`, `image_digest`, `base_commit` | the declared PoC payload path is not dynamically added to the protected set; PatchPlan/diff consistency is semantic evidence, not an arm-independent mechanical gate |
 | Host regression | 19 candidate plans keyed by `(instance_id, base_commit)`; project-specific executable probes validated on base + gold-patched fresh containers; plan/evidence set SHA-bound; confirmatory adapter fails before launch on any mismatch | replace the overlapping candidate roster and regenerate/freeze its plans |
 | Semantic | zero-human heterogeneous panel: `claude-opus-4-8`, `gpt-5.5-2026-04-23`, `gemini/gemini-3.5-flash` (LiteLLM Google AI Studio); all three seats valid, then 2-of-3; blinded packet includes frozen oracle + raw host replay + host regression | GPT and Gemini live smoke pass; Opus is externally blocked by Anthropic account credit |
@@ -756,7 +765,7 @@ full enforcement; it does not describe the current §IV.0 authority. Names are t
 | **Fixer — clean apply** | `fix_loop.log` shows `patch_exit=0` (+ `build_exit=0`); apply runs through the immutable 0555 `patch.sh` | **yes** | `validation_macros.j2:21-24`; `_PATCH_SCRIPT` |
 | **Fixer — patch is Fixer-only** | no hunk in `model_patch.diff` is byte-identical to a `repo_changes.diff` hunk (symptom check) | warning | `build.j2:25-42`, `fix.j2:17-40` |
 | **Fixer — verdict** | `patch_validation_results.txt` + `VERDICT: PASS`, `PATCH_APPLY_STATUS: clean`, `BUILD_STATUS: success`, `REPRO_RUNS_NO_CRASH: 3/3` | **yes** | `PATCH_VALIDATION_FIELDS`; `criteria.py:655-657` |
-| **Fixer — root-cause block** *(decomposed only)* | `root_cause_analysis.txt` + all 5 `ROOT_CAUSE_BLOCK_KEYS` | warning | `HIERARCHICAL_ONLY['Fixer']` |
+| **Fixer — root-cause block** | `root_cause_analysis.txt` + all 5 `ROOT_CAUSE_BLOCK_KEYS`; `patch_plan.json` present | warning | `REQUIRED_FILES['Fixer']` |
 | **Reporter** | `security_report.md` present + non-vacuous (sections are an LLM concern) | **yes** | `REQUIRED_FILES['Reporter']` |
 | **Lifecycle** | first event == `AgentCreated`; each WORKER reaches one terminal `WorkCompleted`/`WorkFailed`; retry chain respects ≤3 | warning | replay invariant `agent_session.py:558` |
 
@@ -854,7 +863,7 @@ fresh-replay, regression, and semantic-review gaps listed here.
 | Patch valid + clean apply + 3/3 | partial: verdict-file **presence** wired | — | `fixed_success_mechanical` **fully dead**; nothing re-applies/re-builds post-hoc |
 | Patch fixes bug ≠ suppresses sanitizer | — | — (UNWIRED) | **most dangerous gap**: `secb build` runs the agent's `build.sh`, so `-fsanitize` can be stripped and a non-fix passes |
 | Patch is Fixer-only | — | — | prompt-only discipline; no gate scans the diff for build-system paths |
-| Root-cause soundness | block-key presence (decomposed only) | — (net-new judge UNWIRED) | crash-site-as-root-cause not caught without golden `bug_description` |
+| Root-cause soundness | common RCA/PatchPlan presence + block-key presence | — (net-new judge UNWIRED) | crash-site-as-root-cause not caught without golden `bug_description` |
 | Report evidence-backed | ✅ empty/whitespace caught | — (report judge UNWIRED) | nonempty-but-fabricated report passes |
 | Built/Exploited/Fixed during the run (live retry) | — | structural/deterministic/execution/judge over **generic** output drives retry | the live pipeline does NOT re-check SEC-bench correctness; a well-formed-but-false deliverable survives |
 
@@ -970,8 +979,10 @@ a Host-owned index), reproducer, PoC/pointer bytes, every declared binary's path
 resolved argv/stdin mode, and any required project-local library's SONAME, candidate,
 resolved target, target digest, and effective loader path. After all three exploit runs, the
 Host revalidates and recaptures the complete identity before sealing it with the verdict
-hash. Patch approval additionally seals the plan, rendered diff, and replay identity.
-Symlinked or changed inputs fail closed.
+hash. The solver-authored PatchPlan does not carry or copy that Host identity. After
+independently revalidating the replay contract, the Host records a private `_PatchApproval`
+that binds the validated normalized plan hash, exact raw plan bytes, rendered diff, target
+preimage, and replay identity. Symlinked, schema-invalid, or changed inputs fail closed.
 
 Procedure execution never uses `bash -lc`. It preserves the image's OSS-Fuzz variables,
 fixes `PATH`, `LC_ALL=C`, `BASH_ENV=/dev/null`, and `ENV=/dev/null`, and adds
@@ -1031,7 +1042,7 @@ Build-Setup, Build-Executor, and Reporter remain agentic.
 | **`model_patch.diff`** | The Fixer deliverable — the candidate security fix |
 | **Sealed dir** | `<run>.sealed/`, a sibling of the run root with no bind mount; holds `secb` + `secb-exec` |
 | **Builder baseline** | Local `arise-builder-baseline` commit of `repo_changes.diff`, so the Fixer's `git diff HEAD` carries only Fixer edits |
-| **Flat / hierarchical arm** | Single agent doing all phases vs BOSS→MANAGER→WORKER decomposition |
+| **Flat / hierarchical arm** | Naive single-session N1 with no subagents or Host procedures vs the complete B4 system (hierarchy, routing, scoped context, procedures, recovery) |
 | **Oracle** | Solver-visible `sanitizer_report` plus evaluator-only `bug_report`; the latter is never rendered into solver prompts |
 | **OCC** | Optimistic concurrency control via `UNIQUE(aggregate_id, sequence_number)` |
 | **Wired / unwired** | Whether a `criteria.py` function is actually reached by a production consumer (`bef.py`/`linear.py`) |
