@@ -4,7 +4,6 @@ from plugins.security import roles as R
 from plugins.security.deliverables import (
     ARTIFACT_DIRS,
     ARTIFACT_PATHS,
-    HIERARCHICAL_ONLY,
     REQUIRED_FILES,
     VALIDATION_REQUIRED,
 )
@@ -25,7 +24,7 @@ def test_every_mandated_deliverable_has_exactly_one_producer() -> None:
     eval layer can attribute it and a downstream consumer always has a producer."""
     mandated = {
         path
-        for group in (REQUIRED_FILES, VALIDATION_REQUIRED, HIERARCHICAL_ONLY)
+        for group in (REQUIRED_FILES, VALIDATION_REQUIRED)
         for paths in group.values()
         for path in paths
     }
@@ -34,21 +33,14 @@ def test_every_mandated_deliverable_has_exactly_one_producer() -> None:
         assert len(owners) == 1, (path, owners)
 
 
-def test_decomposition_only_matches_deliverables_hierarchical_only() -> None:
-    """The roles-derived hierarchical-only set must equal deliverables.HIERARCHICAL_ONLY so
-    the prompt (which reads the constant) and the eval (which reads the derivation) cannot
-    silently drift — the exact failure this refactor exists to prevent."""
-    for phase in R.PHASE_ORDER:
-        assert R.decomposition_only_deliverables(phase) == HIERARCHICAL_ONLY.get(phase, ())
-
-
-def test_optional_role_deliverables_are_not_hierarchical_only_required() -> None:
-    """Optional role outputs may be useful evidence, but they are not mandatory files."""
-    assert R.decomposition_only_deliverables("Fixer") == (
+def test_root_cause_and_patch_plan_are_common_fixer_deliverables() -> None:
+    """Flat and decomposed executions share one Fixer artifact contract."""
+    assert REQUIRED_FILES["Fixer"] == (
         "/testcase/root_cause_analysis.txt",
         "/testcase/patch_plan.json",
+        "/testcase/model_patch.diff",
     )
-    assert "/testcase/fix_summary.md" not in HIERARCHICAL_ONLY.get("Fixer", ())
+    assert "/testcase/fix_summary.md" not in REQUIRED_FILES["Fixer"]
 
 
 def test_hard_dependencies_match_develop_prompt_artifact_handoffs() -> None:
@@ -98,7 +90,7 @@ def test_every_phase_has_a_required_core_chain() -> None:
 def test_artifact_path_constants_cover_mandated_deliverables() -> None:
     mandated = {
         path
-        for group in (REQUIRED_FILES, VALIDATION_REQUIRED, HIERARCHICAL_ONLY)
+        for group in (REQUIRED_FILES, VALIDATION_REQUIRED)
         for paths in group.values()
         for path in paths
     }
@@ -120,7 +112,7 @@ def test_artifact_contract_uses_selected_poc_pointer_not_package_or_glob() -> No
     # Given: the flattened mandatory phase contract.
     mandated = {
         path
-        for group in (REQUIRED_FILES, VALIDATION_REQUIRED, HIERARCHICAL_ONLY)
+        for group in (REQUIRED_FILES, VALIDATION_REQUIRED)
         for paths in group.values()
         for path in paths
     }

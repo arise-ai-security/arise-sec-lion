@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from config.overlay import resolve_overlay
 from experiments.shared.evaluation.confirmatory import PairedObservation
 from experiments.shared.evaluation.adapters import arise_confirmatory
 from experiments.shared.evaluation.adapters.arise_confirmatory import (
@@ -24,6 +25,20 @@ from experiments.shared.evaluation.confirmatory_runner import (
 )
 from experiments.shared.evaluation.models import RunData
 from experiments.shared.evaluation.regression import RegressionCommand, plan_sha256
+
+
+def _n1_control_config() -> dict[str, object]:
+    return {
+        "orchestration": {
+            "mode": "flat",
+            "procedural_dispatch": False,
+            "skip_judge": True,
+        },
+        "worker": {
+            "tool": "openhands",
+            "tool_params": {"openhands": {"enable_subagents": False}},
+        },
+    }
 
 
 def _outcome(
@@ -180,6 +195,11 @@ def _authoritative_verdict(
             "success": success,
             "mechanical": {
                 "passed": mechanical,
+                "artifact_completeness": {
+                    "passed": True,
+                    "required": ["/testcase/security_report.md"],
+                    "missing_or_vacuous": [],
+                },
                 "replay_count": 3,
                 "expected_crash_signature": {
                     "sanitizer_class": "heap-buffer-overflow",
@@ -551,10 +571,11 @@ def test_run_confirmatory_study_injects_launcher_and_assembles_report() -> None:
     assert report.evaluation_completeness_rate == 1.0
 
 
+@pytest.mark.parametrize("cell", ("N1", "B4"))
 def test_production_adapter_resolves_cost_and_authoritative_verdict(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, cell: str
 ) -> None:
-    # Given: A completed run load and authoritative combined verdict
+    # Given: A completed run from either arm and one authoritative combined evaluator.
     run_id = uuid4()
     run_data = RunData(
         run_id=run_id,
@@ -577,7 +598,7 @@ def test_production_adapter_resolves_cost_and_authoritative_verdict(
     adapter = object.__new__(AriseConfirmatoryAdapter)
     adapter._study_root = tmp_path
     adapter._regression_plans_path = tmp_path / "regression_plans.yaml"
-    candidate = ConfirmatoryCandidate("B4", "task", "base", 0)
+    candidate = ConfirmatoryCandidate(cell, "task", "base", 0)
 
     # When: The production adapter resolves the run
     outcome = adapter._resolve_run(candidate, str(run_id))
@@ -590,6 +611,60 @@ def test_production_adapter_resolves_cost_and_authoritative_verdict(
     assert outcome.evaluation_complete
     assert outcome.mechanical_success
     assert outcome.combined_success
+
+
+def test_confirmatory_n1_control_accepts_unassisted_openhands() -> None:
+    # Given: the intended flat, single-agent OpenHands control configuration.
+    config = _n1_control_config()
+
+    # When + Then: prelaunch control validation accepts it.
+    arise_confirmatory._validate_n1_control_config(config)
+
+
+def test_committed_confirmatory_n1_config_is_unassisted() -> None:
+    # Given: the N1 overlay referenced by the paired confirmatory manifest.
+    repo_root = Path(__file__).resolve().parents[4]
+    study_root = (
+        repo_root / "experiments/b4-boss-manager-worker/confirmatory"
+    )
+    manifest = AriseConfirmatoryAdapter._read_yaml(study_root / "manifest.yaml")
+    config_path = study_root / str(manifest["cells"]["N1"]["config"])
+    config = resolve_overlay(config_path, repo_root=repo_root)
+
+    # When + Then: its resolved settings satisfy the prelaunch control boundary.
+    arise_confirmatory._validate_n1_control_config(config)
+
+
+@pytest.mark.parametrize(
+    ("procedural_dispatch", "enable_subagents", "expected"),
+    (
+        (True, False, "procedural_dispatch"),
+        (None, False, "procedural_dispatch"),
+        (False, True, "enable_subagents"),
+        (False, None, "enable_subagents"),
+    ),
+)
+def test_confirmatory_n1_control_rejects_in_run_assistance(
+    procedural_dispatch: bool | None,
+    enable_subagents: bool | None,
+    expected: str,
+) -> None:
+    # Given: an N1 configuration that enables or fails to pin one assistance surface.
+    config = _n1_control_config()
+    orchestration = config["orchestration"]
+    worker = config["worker"]
+    assert isinstance(orchestration, dict)
+    assert isinstance(worker, dict)
+    tool_params = worker["tool_params"]
+    assert isinstance(tool_params, dict)
+    openhands = tool_params["openhands"]
+    assert isinstance(openhands, dict)
+    orchestration["procedural_dispatch"] = procedural_dispatch
+    openhands["enable_subagents"] = enable_subagents
+
+    # When + Then: prelaunch validation rejects the assisted or implicit setting.
+    with pytest.raises(ValueError, match=expected):
+        arise_confirmatory._validate_n1_control_config(config)
 
 
 def test_production_adapter_marks_evaluator_failure_incomplete(
@@ -669,7 +744,15 @@ def test_complete_failing_bundle_keeps_evaluation_complete(tmp_path, monkeypatch
 
 @pytest.mark.parametrize(
     "broken_field",
-    ("combined", "safety", "regression", "semantic", "poc_replay", "patch_replay"),
+    (
+        "combined",
+        "artifact_completeness",
+        "safety",
+        "regression",
+        "semantic",
+        "poc_replay",
+        "patch_replay",
+    ),
 )
 def test_production_adapter_rejects_incomplete_evaluator_envelope(
     tmp_path, monkeypatch, broken_field
@@ -694,6 +777,10 @@ def test_production_adapter_rejects_incomplete_evaluator_envelope(
         assert isinstance(combined, dict)
         if broken_field == "combined":
             envelope["combined"] = {}
+        elif broken_field == "artifact_completeness":
+            mechanical = combined["mechanical"]
+            assert isinstance(mechanical, dict)
+            mechanical[broken_field] = {}
         elif broken_field in {"safety", "regression", "semantic"}:
             combined[broken_field] = {}
         else:

@@ -128,6 +128,8 @@ def test_success_criteria_three_independent_results(tmp_path) -> None:
     assert set(result) == {"Builder", "Exploiter", "Fixer", "Reporter"}
     fixer = result["Fixer"]
     assert fixer["key_files_exist"]["/testcase/model_patch.diff"] is True
+    assert fixer["key_files_exist"]["/testcase/root_cause_analysis.txt"] is False
+    assert fixer["key_files_exist"]["/testcase/patch_plan.json"] is False
     assert fixer["key_files_exist"]["/testcase/patch_validation_results.txt"] is False
     assert "patch applies cleanly" in fixer["declared_criteria"]
     assert fixer["self_report"]["work_completed"] == ["patch created"]

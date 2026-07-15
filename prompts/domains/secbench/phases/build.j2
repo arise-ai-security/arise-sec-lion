@@ -45,8 +45,8 @@ if [ -s {{ artifact_paths.repo_changes_diff }} ]; then
 fi
 ```
 - This commit is local runtime state, not a deliverable. It establishes the Builder-adjusted baseline so `{{ artifact_paths.model_patch }}` can contain only Fixer edits.
-- Build-Verifier recomputes this repository state and requires a byte-exact match with
-  `{{ artifact_paths.repo_changes_diff }}` before accepting the Builder artifacts.
+- A later repository-state check must reproduce `{{ artifact_paths.repo_changes_diff }}`
+  byte-for-byte from the recorded Builder baseline.
 - Do not use `git add -A`; it can commit untracked build outputs or generated files that `{{ artifact_paths.repo_changes_diff }}` cannot replay.
 {% if include_validation_gate %}
 
@@ -61,15 +61,14 @@ blocking one shell call on it:
 {{ secb_build_validation(artifact_paths, phase_commands) }}
 Once the build reports `exit=0`, read `{{ artifact_paths.binary_paths }}` and run
 each declared binary with `--help` or `-h` when supported (short calls; no need
-to detach them). The Host streams startup-probe output, then immediately stops the probe
-and resets the container when the exact configured sanitizer marker appears. That
-`STOPPED_AFTER_MARKER` result proves initialization and is distinct from `TIMED_OUT`; a
-probe deadline is a FAIL when the marker was not observed. Every build, patch, exploit,
-and post-patch replay timeout remains a FAIL. If a binary fails to load the sanitizer runtime
+to detach them). Bound every smoke invocation with a short timeout and inspect its
+actual output and exit status. A timeout is not evidence of successful initialization.
+Every build, patch, exploit, and post-patch replay timeout remains a FAIL. If a binary fails
+to load the sanitizer runtime
 (e.g. "cannot open shared object file: libclang_rt.asan" or "libasan"), the
 build is NOT complete — install the matching ASan runtime and fix
 `LD_LIBRARY_PATH` until the instrumented binary runs. A build that compiles but
-cannot execute is a FAIL. For a missing project library, the Host may resolve one unique,
-safe copy under `{{ work_dir }}` and freeze its directory into the direct-replay
-environment; missing, ambiguous, or path-escaping candidates fail closed.
+cannot execute is a FAIL. For a missing project library, use only one unambiguous,
+project-local copy under `{{ work_dir }}`; missing, ambiguous, or path-escaping
+candidates are a FAIL.
 {% endif %}

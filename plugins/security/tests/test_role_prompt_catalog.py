@@ -182,8 +182,8 @@ def test_reproducer_and_validation_contracts_match_host_semantics() -> None:
     assert "Exit\n   0 is valid" in exploit
     assert "exact agreement on all three fields" in exploit
     assert "either 0 or the frozen dataset exit oracle" in patch
-    assert "/testcase/exploit_input_identity.txt" in root_cause
-    assert "Copy its single Host-issued value exactly" in root_cause
+    assert "/testcase/exploit_input_identity.txt" not in root_cause
+    assert "Host-issued value" not in root_cause
 
 
 def test_role_prompt_rendering_is_context_deterministic_and_bounded() -> None:

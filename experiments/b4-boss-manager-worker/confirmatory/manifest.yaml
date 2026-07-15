@@ -8,6 +8,6 @@ hypothesis: >
 dataset: dataset.yaml
 replicates: 1
 cells:
-  N1: {group: N, runner: arise, config: ../../n1-openhands-linear/configs/N1-openhands-linear.yaml}
+  N1: {group: N, runner: arise, config: ../../n1-secbench-full/configs/N1-openhands-linear.yaml}
   B4: {group: B, runner: arise, config: ../configs/B4-boss-manager-worker.yaml}
 headline_cells: [N1, B4]

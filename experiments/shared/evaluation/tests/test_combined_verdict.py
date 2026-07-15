@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import json
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from experiments.shared.evaluation.combined_verdict import (
+    ArtifactCompleteness,
     CombinedVerdictInput,
     evaluate_combined_verdict,
 )
@@ -213,6 +217,11 @@ def _request(**updates) -> CombinedVerdictInput:
         "patch_output_dir": Path("/out/patch"),
         "poc_present": True,
         "patch_present": True,
+        "artifact_completeness": ArtifactCompleteness(
+            passed=True,
+            required=(),
+            missing_or_vacuous=(),
+        ),
         "safety": _safety(),
         "task_id": "opaque-evaluation",
         "expected_instance_id": "opaque-evaluation",
@@ -256,6 +265,45 @@ def test_any_exact_oracle_mismatch_fails_before_semantic_panel() -> None:
     assert not result.mechanical.poc.passed
     assert not result.success
     assert result.semantic is None
+    assert requested == []
+
+
+@pytest.mark.parametrize("arm", ("N1", "B4"))
+@pytest.mark.parametrize(
+    "missing",
+    (
+        "/testcase/root_cause_analysis.txt",
+        "/testcase/patch_plan.json",
+        "/testcase/security_report.md",
+    ),
+)
+def test_missing_common_artifact_fails_both_arms_before_semantic_panel(
+    arm: str,
+    missing: str,
+) -> None:
+    requested: list[str] = []
+
+    def factory(model: str):
+        requested.append(model)
+        return FakeJudge(model, True)
+
+    result = evaluate_combined_verdict(
+        _request(
+            task_id=f"{arm}-opaque-evaluation",
+            artifact_completeness=ArtifactCompleteness(
+                passed=False,
+                required=(missing,),
+                missing_or_vacuous=(missing,),
+            ),
+        ),
+        replay_runner=FakeReplayRunner(),
+        judge_factory=factory,
+    )
+
+    assert not result.mechanical.artifact_completeness.passed
+    assert not result.mechanical.passed
+    assert result.semantic is None
+    assert not result.success
     assert requested == []
 
 
@@ -378,20 +426,71 @@ def test_patch_target_paths_resolve_traversal_against_sealed_workspace(tmp_path)
 def _write_minimal_run_dir(run_dir: Path, *, zero_byte_poc: bool = False) -> None:
     testcase = run_dir / "testcase"
     testcase.mkdir(parents=True)
+    source = run_dir / "src"
+    source.mkdir()
+    (source / "build.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary = run_dir / "work" / "bin" / "app"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"binary")
+    (testcase / "base_commit_hash").write_text("abc\n", encoding="utf-8")
+    (testcase / "repo_changes.diff").write_bytes(b"")
+    (testcase / "binary_paths.txt").write_text("/work/bin/app\n", encoding="utf-8")
     (testcase / "model_patch.diff").write_text(
         "diff --git a/fix.c b/fix.c\n--- a/fix.c\n+++ b/fix.c\n@@ -1 +1 @@\n-old\n+new\n",
         encoding="utf-8",
     )
     (testcase / "poc").write_bytes(b"" if zero_byte_poc else b"payload")
     (testcase / "poc_path.txt").write_text("testcase/poc\n", encoding="utf-8")
+    (testcase / "repro.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (testcase / "exploit_validation_results.txt").write_text(
+        "VERDICT: PASS\n", encoding="utf-8"
+    )
+    (testcase / "root_cause_analysis.txt").write_text(
+        "The missing bounds check permits an out-of-range write.\n",
+        encoding="utf-8",
+    )
+    (testcase / "patch_plan.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "evidence_references": ["root_cause_analysis.txt"],
+                "target_file": "/src/fix.c",
+                "target_symbol": "fix",
+                "base_sha256": "0" * 64,
+                "operations": [
+                    {
+                        "kind": "replace",
+                        "anchor": "old",
+                        "expected_occurrences": 1,
+                        "replacement": "new",
+                    }
+                ],
+                "allowed_paths": ["/src"],
+                "forbidden_paths": ["/testcase"],
+                "required_postconditions": ["sanitizer finding absent"],
+                "validation_commands": ["secb patch", "secb build", "secb repro"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (testcase / "patch_validation_results.txt").write_text(
+        "VERDICT: PASS\n", encoding="utf-8"
+    )
+    (testcase / "security_report.md").write_text(
+        "# Security report\n\nThe root cause and fix are validated.\n",
+        encoding="utf-8",
+    )
 
 
-def _run_data(run_dir: Path) -> RunData:
+def _run_data(run_dir: Path, *, cell: str | None = None) -> RunData:
+    manifest = {"task": "project.cve-0000-0000"}
+    if cell is not None:
+        manifest["cell"] = cell
     return RunData(
         run_id=uuid4(),
         events=[],
         run_dir=run_dir,
-        manifest={"task": "project.cve-0000-0000"},
+        manifest=manifest,
         cve=CveOracle(
             instance_id="project.cve-0000-0000",
             sanitizer="address",
@@ -429,6 +528,43 @@ def test_wiring_accepts_zero_byte_poc_and_persists_full_bundle(tmp_path) -> None
         "host_regression.json",
         "semantic_panel.json",
     } == names
+
+
+@pytest.mark.parametrize("cell", ("N1", "B4"))
+@pytest.mark.parametrize(
+    "artifact",
+    (
+        "root_cause_analysis.txt",
+        "patch_plan.json",
+        "security_report.md",
+    ),
+)
+def test_wiring_fails_both_arms_when_common_artifact_is_missing(
+    tmp_path: Path,
+    cell: str,
+    artifact: str,
+) -> None:
+    run_dir = tmp_path / f"{cell}-{artifact}"
+    _write_minimal_run_dir(run_dir)
+    (run_dir / "testcase" / artifact).unlink()
+
+    envelope = build_run_verdict(
+        _run_data(run_dir, cell=cell),
+        replay_runner=FakeReplayRunner(instance_id="project.cve-0000-0000"),
+        judge_factory=_judge_factory((True, True, True)),
+        regression=_passing_regression(),
+    )
+
+    assert envelope["success"] is False
+    combined = envelope["combined"]
+    assert isinstance(combined, dict)
+    mechanical = combined["mechanical"]
+    assert isinstance(mechanical, dict)
+    completeness = mechanical["artifact_completeness"]
+    assert isinstance(completeness, dict)
+    assert completeness["passed"] is False
+    assert f"/testcase/{artifact}" in completeness["missing_or_vacuous"]
+    assert combined["semantic"]["skipped"] == "prior_gate_failed"
 
 
 def test_wiring_without_regression_plan_is_unavailable(tmp_path) -> None:

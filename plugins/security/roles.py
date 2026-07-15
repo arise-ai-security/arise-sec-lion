@@ -22,9 +22,7 @@ from typing import Final
 
 from plugins.security.deliverables import (
     ARTIFACT_PATHS,
-    REQUIRED_FILES,
     ROOT_CAUSE_BLOCK_KEYS,
-    VALIDATION_REQUIRED,
 )
 
 
@@ -291,21 +289,4 @@ def deliverables_owned_by_others(role: Role) -> tuple[str, ...]:
         if other.name == role.name:
             continue
         out.extend(p for p in other.produces if p not in out and p not in role.produces)
-    return tuple(out)
-
-
-def decomposition_only_deliverables(phase: str) -> tuple[str, ...]:
-    """Deliverables a phase's roles produce that are NOT in the flat phase contract.
-
-    These are mandated only when a required phase role produces them — the
-    ``HIERARCHICAL_ONLY`` set in deliverables.py, derived here from the catalog so
-    the role layer stays authoritative. Order follows the role execution order.
-    Optional role outputs remain useful evidence but are not key-file failures.
-    """
-    flat = set(REQUIRED_FILES.get(phase, ())) | set(VALIDATION_REQUIRED.get(phase, ()))
-    out: list[str] = []
-    for role in PHASE_ROLES.get(phase, ()):
-        if not role.required:
-            continue
-        out.extend(p for p in role.produces if p not in flat and p not in out)
     return tuple(out)

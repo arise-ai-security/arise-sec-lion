@@ -4,7 +4,7 @@
 {%- endfor %}
 {% if phase in validation_required %}
 {% for path in validation_required[phase] %}
-- `{{ path }}` (required validation verdict file)
+- `{{ path }}` (required in-run diagnostic validation file)
 {%- endfor %}
 {% endif %}
 {%- endmacro %}

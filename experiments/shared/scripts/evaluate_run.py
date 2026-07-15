@@ -1,9 +1,9 @@
 """Compute a run's authoritative verdict and print it as JSON.
 
-The authoritative result is the three-layer combined verdict
+The authoritative result is the four-gate combined verdict
 (:func:`~experiments.shared.evaluation.combined_verdict.evaluate_combined_verdict`):
-``official mechanical AND Arise safety/provenance floor AND independent semantic``.
-None of the three layers trusts an agent-authored VERDICT file.
+``official mechanical AND Arise safety/provenance floor AND Host regression AND
+independent semantic``. None of the four gates trusts an agent-authored VERDICT file.
 
 The two live-infra seams are dependency-injected: the fresh-container reference
 evaluator adapter and the pinned LLM judge behind the semantic gate. The legacy
@@ -38,6 +38,7 @@ from experiments.shared.evaluation.adapters import (
     SecBenchEvaluatorAdapter,
 )
 from experiments.shared.evaluation.combined_verdict import (
+    ArtifactCompleteness,
     CombinedVerdictInput,
     evaluate_combined_verdict,
 )
@@ -48,7 +49,12 @@ from experiments.shared.evaluation.regression import (
     load_regression_plans_file,
     unavailable_regression,
 )
-from experiments.shared.evaluation.criteria import declared_path_exists, evaluate_run
+from experiments.shared.evaluation.criteria import (
+    ALL_KEY_FILES,
+    declared_path_exists,
+    evaluate_run,
+    key_file_exists,
+)
 from experiments.shared.evaluation.judge import (
     DEFAULT_JUDGE_MODEL,
     DEFAULT_REASONING_EFFORT,
@@ -62,6 +68,7 @@ from experiments.shared.evaluation.official import (
     crash_signature,
     sha256_file,
 )
+from experiments.shared.evaluation.patch_plan import normalized_patch_plan
 
 
 if TYPE_CHECKING:
@@ -140,7 +147,7 @@ def _semantic_evidence(run_data: RunData, *, poc_present: bool, patch_present: b
         "root_cause_excerpt": _read_text(
             run_dir / "testcase" / "root_cause_analysis.txt"
         )[:16000],
-        "patch_plan_excerpt": _read_text(run_dir / "testcase" / "patch_plan.json")[:16000],
+        "patch_plan": normalized_patch_plan(run_dir / "testcase" / "patch_plan.json"),
         "patch_excerpt": _read_text(run_dir / "testcase" / "model_patch.diff")[:16000],
         "patch_validation_excerpt": _read_text(
             run_dir / "testcase" / "patch_validation_results.txt"
@@ -154,6 +161,26 @@ def _semantic_evidence(run_data: RunData, *, poc_present: bool, patch_present: b
         ],
         "report_excerpt": _read_text(run_dir / "testcase" / "security_report.md")[:16000],
     }
+
+
+def _common_artifact_completeness(
+    run_dir: Path,
+    *,
+    patch_plan_valid: bool,
+) -> ArtifactCompleteness:
+    """Apply one non-vacuous deliverable contract to both solver arms."""
+    patch_plan_path = "/testcase/patch_plan.json"
+    missing = tuple(
+        path
+        for path in ALL_KEY_FILES
+        if not key_file_exists(path, run_dir)
+        or (path == patch_plan_path and not patch_plan_valid)
+    )
+    return ArtifactCompleteness(
+        passed=not missing,
+        required=ALL_KEY_FILES,
+        missing_or_vacuous=missing,
+    )
 
 
 def _resolve_regression_evidence(
@@ -241,6 +268,11 @@ def _assemble_combined_input(
     poc_present = declared_path_exists(
         testcase / "poc_path.txt", run_dir, allow_empty=True
     )
+    semantic_evidence = _semantic_evidence(
+        run_data,
+        poc_present=poc_present,
+        patch_present=patch_present,
+    )
     artifact_paths, artifact_hashes = _hash_run_artifacts(run_dir)
     safety = SafetyFloorInput(
         workspace_root=str(run_dir),
@@ -270,6 +302,10 @@ def _assemble_combined_input(
         patch_output_dir=replay_root / "patch",
         poc_present=poc_present,
         patch_present=patch_present,
+        artifact_completeness=_common_artifact_completeness(
+            run_dir,
+            patch_plan_valid=semantic_evidence["patch_plan"] is not None,
+        ),
         safety=safety,
         task_id=str(run_data.run_id),
         expected_instance_id=instance_id,
@@ -278,9 +314,7 @@ def _assemble_combined_input(
             if run_data.cve is not None
             else CrashSignature(None, None, None)
         ),
-        semantic_evidence=_semantic_evidence(
-            run_data, poc_present=poc_present, patch_present=patch_present
-        ),
+        semantic_evidence=semantic_evidence,
         regression=_resolve_regression_evidence(
             run_data,
             regression=regression,
@@ -383,6 +417,7 @@ def _evaluator_hashes() -> dict[str, str]:
         REPO_ROOT / "experiments/shared/evaluation/combined_verdict.py",
         REPO_ROOT / "experiments/shared/evaluation/official.py",
         REPO_ROOT / "experiments/shared/evaluation/semantic_gate.py",
+        REPO_ROOT / "experiments/shared/evaluation/patch_plan.py",
         REPO_ROOT / "experiments/shared/evaluation/judge.py",
         REPO_ROOT / "experiments/shared/evaluation/adapters/secbench.py",
     )
@@ -436,7 +471,7 @@ async def run_verdict(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Print the authoritative three-layer combined per-run verdict as JSON."
+        description="Print the authoritative four-gate combined per-run verdict as JSON."
     )
     parser.add_argument("run_id", help="The run/root (BOSS) aggregate id.")
     parser.add_argument(

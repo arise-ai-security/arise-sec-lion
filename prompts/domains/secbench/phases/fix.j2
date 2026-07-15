@@ -5,22 +5,45 @@ Use `secb patch`, `secb build`, and `secb repro` to validate the patch.
 
 ### Goal
 
-1. Produce `{{ artifact_paths.model_patch }}` as the only security fix, generated via git diff of source edits rather than hand-written.
-2. Prove the patch applies cleanly with `secb patch`.
-3. Rebuild successfully with `secb build` after applying the patch.
-4. Prove `secb repro` produces no sanitizer error across 3/3 clean runs.
-5. Write `{{ artifact_paths.patch_validation }}` with the required machine-readable block and a PASS verdict only when apply, build, and repro validation all succeed.
-6. Keep the root cause analysis consistent with the patched locations when the phase is hierarchical.
+1. Write `{{ artifact_paths.root_cause_analysis }}` from runtime, source, and PoC evidence.
+2. Compare at least two repair sites and select the site that fixes the causal defect rather than silencing the crash.
+3. Write `{{ artifact_paths.patch_plan }}` as the exact structured edit plan before changing source.
+4. Produce `{{ artifact_paths.model_patch }}` as the only security fix, generated via git diff of the planned source edits rather than hand-written.
+5. Prove the patch applies cleanly with `secb patch`.
+6. Rebuild successfully with `secb build` after applying the patch.
+7. Prove `secb repro` produces no sanitizer error across 3/3 clean runs.
+8. Write `{{ artifact_paths.patch_validation }}` with the required machine-readable block and a PASS verdict only when apply, build, and repro validation all succeed.
 
 ### Mandatory Requirements
 
+- Read the selected PoC, reproducer, raw repro logs, sanitizer report, crash-site source,
+  callers, and the first invalid-state producer before proposing a fix.
+- In `{{ artifact_paths.root_cause_analysis }}`, state the causal chain and compare at least
+  two candidate repair sites by contract, coverage, caller behavior, and false-positive risk.
+  End the file with this exact machine-readable block:
+  ```
+{% for key, description in root_cause_block_fields -%}
+  {{ key }}: {{ description }}
+{% endfor -%}
+  ```
+- Before editing source, compute the current target file's lowercase SHA-256 and write
+  `{{ artifact_paths.patch_plan }}` with `schema_version="1"`,
+  `evidence_references=["{{ artifact_paths.root_cause_analysis }}"]`, an absolute `/src`
+  `target_file`, exact `target_symbol`, `base_sha256`, one or more literal `operations`
+  (`kind`, non-empty unique `anchor`, `expected_occurrences`, and exact `replacement`),
+  project-source `allowed_paths`, non-empty `forbidden_paths` including `/testcase`,
+  non-empty `required_postconditions`, and
+  `validation_commands=["secb patch", "secb build", "secb repro"]`.
+- Only after both analysis artifacts exist, edit source exactly as planned. If evidence is
+  insufficient, an anchor is ambiguous, or the exact replacement is uncertain, record the
+  failure instead of guessing.
 - Generate `{{ artifact_paths.model_patch }}` from source edits with `git diff --no-color HEAD -- <file1> [<file2> ...]`; do not hand-write the patch file.
 - Diff against `HEAD`, not the original base: `git diff "$(cat {{ artifact_paths.base_commit_hash }})"` would re-include Builder's hunks.
 - Apply Builder changes and the model patch through `secb patch`.
 - Rebuild with `secb build` after applying the patch.
 - Validate with `secb repro` for 3/3 clean runs.
 - PASS requires clean patch apply, successful rebuild, no post-patch sanitizer error, and 3/3 no-crash repro runs.
-- The patch changes only the security fix and stays consistent with the root-cause analysis.
+- The patch changes only the security fix and matches both the root-cause analysis and PatchPlan.
 
 ### Fixer Diff Baseline
 

@@ -109,6 +109,11 @@ class ApplicationConfig:
     flat_invariant_builder: FlatInvariantBuilder | None = None
 
     def __post_init__(self) -> None:
+        if self.mode == "flat" and self.procedural_dispatch:
+            raise ValueError(
+                "orchestration.mode='flat' cannot enable procedural_dispatch; "
+                "flat execution must use only its configured WorkerPort"
+            )
         if self.mode == "flat" and (
             self.flat_worker is None or self.flat_invariant_builder is None
         ):

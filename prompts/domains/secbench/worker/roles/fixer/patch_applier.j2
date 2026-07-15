@@ -4,11 +4,11 @@
 Render the approved `{{ artifact_paths.patch_plan }}` literally. The approved plan is immutable:
 do not correct, rewrite, reinterpret, or supplement it, and do not edit live source.
 
-1. Read the plan, `{{ artifact_paths.exploit_identity }}`, referenced root-cause evidence, and any
-   Host procedure failure evidence supplied in the briefing.
+1. Read the plan, referenced root-cause evidence, and any Host procedure failure evidence
+   supplied in the briefing.
 2. Validate the schema, target path and hash, allow/forbid scope, unique anchors, evidence
-   references, validation-command set, and exact pre-patch exploit identity against the current
-   read-only source.
+   references, and validation-command set against the current read-only source. The Host
+   independently binds an accepted plan and rendered patch to its private replay identity.
 3. On any mismatch, stop without creating or changing `{{ artifact_paths.model_patch }}`. Publish
    a `<context-update>` naming the exact defect so a reasoning worker can author a new plan for
    Host approval. Do not work around the failed invariant.

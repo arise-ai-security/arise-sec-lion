@@ -36,7 +36,7 @@ RUNTIME_SUFFIXES = {
 IGNORED_PATH_PARTS = {"__pycache__", "dist", "node_modules"}
 EXPERIMENT_ID = re.compile(
     r"(?<![A-Za-z0-9_\\])(?i:n1|b3|b4)(?![A-Za-z0-9_])"
-    r"|(?i:n1-openhands-linear|b3-direct-compact|b4-boss-manager-worker"
+    r"|(?i:n1-secbench-full|b3-direct-compact|b4-boss-manager-worker"
     r"|b4-adaptive|b3-role|role[_-]?fused|adaptive_execution|_adaptive_treatments)",
 )
 EXPERIMENT_IMPORT = re.compile(

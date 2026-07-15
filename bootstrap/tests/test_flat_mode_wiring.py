@@ -170,6 +170,25 @@ def test_application_config_flat_mode_requires_invariant_builder() -> None:
         )
 
 
+def test_application_config_flat_mode_rejects_procedural_dispatch() -> None:
+    """Flat execution cannot bind the hierarchical Host procedure tier."""
+    from bootstrap import ApplicationConfig
+
+    # Given: an otherwise complete flat-mode configuration.
+    worker = _FakeWorker()
+    builder = _make_noop_invariant_builder()
+
+    # When + Then: enabling Host procedures fails before application wiring.
+    with pytest.raises(ValueError, match="cannot enable procedural_dispatch"):
+        ApplicationConfig(
+            **_base_app_config_kwargs(),
+            mode="flat",
+            procedural_dispatch=True,
+            flat_worker=worker,
+            flat_invariant_builder=builder,
+        )
+
+
 def test_application_config_hierarchical_mode_does_not_require_flat_fields() -> None:
     """Hierarchical mode (default) does NOT need flat-only fields."""
     from bootstrap import ApplicationConfig

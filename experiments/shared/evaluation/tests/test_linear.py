@@ -52,6 +52,8 @@ def test_artifacts_and_success_in_linear_bucket(tmp_path) -> None:
     assert [a.path for a in artifacts.by["linear"]] == ["/testcase/security_report.md"]
     linear = success["linear"]
     assert linear["key_files_exist"]["/testcase/security_report.md"] is True
+    assert linear["key_files_exist"]["/testcase/root_cause_analysis.txt"] is False
+    assert linear["key_files_exist"]["/testcase/patch_plan.json"] is False
     assert linear["self_report"]["work_completed"] == ["all phases done"]
 
 

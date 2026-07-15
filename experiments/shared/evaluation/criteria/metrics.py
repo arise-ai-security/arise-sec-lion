@@ -62,7 +62,11 @@ _REQUIRED_FILES: dict[str, tuple[str, ...]] = {
         "/testcase/poc_path.txt",
         "/testcase/repro.sh",
     ),
-    "Fixer": ("/testcase/model_patch.diff",),
+    "Fixer": (
+        "/testcase/root_cause_analysis.txt",
+        "/testcase/patch_plan.json",
+        "/testcase/model_patch.diff",
+    ),
     "Reporter": ("/testcase/security_report.md",),
 }
 
@@ -72,10 +76,6 @@ _VALIDATION_REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 _MAY_BE_EMPTY: frozenset[str] = frozenset({"/testcase/repo_changes.diff"})
-_HIERARCHICAL_ROLE_SPECIFIC_FIXER: tuple[str, ...] = (
-    "/testcase/root_cause_analysis.txt",
-    "/testcase/patch_plan.json",
-)
 
 _ROLE_PHASE: dict[str, BefPhase] = {
     "Build-Setup": BefPhase.BUILDER,
@@ -134,14 +134,10 @@ ALL_KEY_FILES: tuple[str, ...] = tuple(spec for specs in KEY_FILES.values() for 
 
 
 def _is_hierarchical(run_data: RunData) -> bool:
-    """Whether this run used decomposition into explicit phase sub-agents (as opposed to
-    a single agent owning the full pipeline).
+    """Whether this run used decomposition into explicit phase sub-agents.
 
-    Prefers manifest (cell or study_id). Falls back to event structure (presence of
-    ChildSpawned or multiple distinct aggregates). This is used only in the evaluation
-    layer to decide which additional role-specific requirements (injected by the
-    assessment rules into leaf-role success_criteria) were active for the run.
-    Prompts themselves remain experiment-agnostic and role/phase-based.
+    Prefers manifest metadata and falls back to event structure. Judge prompt
+    construction uses this distinction; artifact requirements do not.
     """
     if run_data.manifest:
         cell = str(run_data.manifest.get("cell", "")).strip().upper()
@@ -150,14 +146,9 @@ def _is_hierarchical(run_data: RunData) -> bool:
             return True
         if cell.startswith("N") or study.startswith("n"):
             return False
-    # Note: the "B"/"N" check is only an internal heuristic in the *evaluation*
-    # layer to determine whether role-specific requirements (injected via
-    # assess.j2 into leaf-role success_criteria) were active. The prompt files
-    # contain no such identifiers.
-    # Fallback: presence of child agents or many distinct aggregates indicates decomposition
-    has_children = any(isinstance(e, ChildSpawned) for e in run_data.events)
-    distinct = len({e.aggregate_id for e in run_data.events})
-    return has_children or distinct > 1
+    has_children = any(isinstance(event, ChildSpawned) for event in run_data.events)
+    distinct_aggregates = len({event.aggregate_id for event in run_data.events})
+    return has_children or distinct_aggregates > 1
 
 
 _ROLE_PREFIX = re.compile(r"^\s*\[([^\]]+)\]")
@@ -349,14 +340,12 @@ def success_criteria_by_bef(run_data: RunData) -> dict[str, dict[str, Any]]:
             )
 
     result: dict[str, dict[str, Any]] = {}
-    hierarchical = _is_hierarchical(run_data)
     dependency_contract = _dependency_contract_by_bef(run_data.events)
     for phase in _BEF_SUBTREES:
-        specs = list(KEY_FILES[phase])
-        if hierarchical and phase == BefPhase.FIXER:
-            specs.extend(_HIERARCHICAL_ROLE_SPECIFIC_FIXER)
         result[phase.value] = {
-            "key_files_exist": {spec: key_file_exists(spec, run_data.run_dir) for spec in specs},
+            "key_files_exist": {
+                spec: key_file_exists(spec, run_data.run_dir) for spec in KEY_FILES[phase]
+            },
             "declared_criteria": list(declared.get(phase, [])),
             "dependency_contract": dependency_contract[phase],
             "self_report": {

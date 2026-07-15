@@ -46,6 +46,15 @@ class ReplayRunnerPort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactCompleteness:
+    """Arm-independent presence check for the common solver deliverables."""
+
+    passed: bool
+    required: tuple[str, ...]
+    missing_or_vacuous: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CombinedVerdictInput:
     poc_input_dir: Path
     poc_output_dir: Path
@@ -53,6 +62,7 @@ class CombinedVerdictInput:
     patch_output_dir: Path
     poc_present: bool
     patch_present: bool
+    artifact_completeness: ArtifactCompleteness
     safety: SafetyFloorInput
     task_id: str
     expected_instance_id: str
@@ -70,6 +80,7 @@ class MechanicalOutcome:
     patch_primary: MechanicalVerdict
     patch_strict: MechanicalVerdict
     patch_generous: MechanicalVerdict
+    artifact_completeness: ArtifactCompleteness
     replay_count: int
     expected_crash_signature: CrashSignature
 
@@ -104,6 +115,9 @@ class CombinedVerdict:
                 ),
                 "poc": asdict(self.mechanical.poc),
                 "patch_primary": asdict(self.mechanical.patch_primary),
+                "artifact_completeness": asdict(
+                    self.mechanical.artifact_completeness
+                ),
                 "sensitivity": {
                     "strict": asdict(self.mechanical.patch_strict),
                     "generous": asdict(self.mechanical.patch_generous),
@@ -178,11 +192,16 @@ def evaluate_combined_verdict(
         request.patch_present, patch_generous_modes, "patch generous"
     )
     mechanical = MechanicalOutcome(
-        passed=poc.passed and patch_primary.passed,
+        passed=(
+            request.artifact_completeness.passed
+            and poc.passed
+            and patch_primary.passed
+        ),
         poc=poc,
         patch_primary=patch_primary,
         patch_strict=patch_strict,
         patch_generous=patch_generous,
+        artifact_completeness=request.artifact_completeness,
         replay_count=REPLAY_COUNT,
         expected_crash_signature=request.expected_crash_signature,
     )

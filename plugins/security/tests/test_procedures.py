@@ -1061,7 +1061,7 @@ async def test_build_validation_rejects_repo_diff_that_does_not_match_worktree(
     assert not any("ASAN_OPTIONS" in command for command in session.commands)
 
 
-def _patch_plan(target: Path, exploit_identity: str) -> dict:
+def _patch_plan(target: Path) -> dict:
     return {
         "evidence_references": ["/testcase/root_cause_analysis.txt"],
         "target_file": "/src/project/vulnerable.c",
@@ -1078,7 +1078,6 @@ def _patch_plan(target: Path, exploit_identity: str) -> dict:
         "allowed_paths": ["/src/project"],
         "forbidden_paths": ["/testcase"],
         "required_postconditions": ["sanitizer finding absent"],
-        "pre_patch_exploit_identity": exploit_identity,
         "validation_commands": ["secb patch", "secb build", "secb repro"],
     }
 
@@ -1126,7 +1125,7 @@ async def _seed_patch_inputs(
     target = source_dir / "project" / "vulnerable.c"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(target_bytes)
-    identity = await _freeze_exploit_identity(
+    await _freeze_exploit_identity(
         tc,
         cve=cve,
         source_dir=source_dir,
@@ -1134,7 +1133,7 @@ async def _seed_patch_inputs(
     )
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
     session = FakeSession(tc, source_dir=source_dir)
     result = await _executor(session).execute(
@@ -1144,7 +1143,7 @@ async def _seed_patch_inputs(
 
 
 async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path) -> None:
-    # Given: a sealed /src source and a manager-authored PatchPlan with real evidence
+    # Given: a sealed /src source and a solver-authored PatchPlan with real evidence
     src = tmp_path / "src" / "project"
     src.mkdir(parents=True)
     target = src / "vulnerable.c"
@@ -1153,7 +1152,7 @@ async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path
     identity = await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
     victim = tmp_path / "model-patch-victim"
     victim.write_text("unchanged\n", encoding="utf-8")
@@ -1165,7 +1164,7 @@ async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path
         "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
     )
 
-    # Then: source remains fresh and the exact edit is emitted as a diff for validation
+    # Then: source remains fresh and the exact edit is privately bound to replay identity
     assert result.success is True
     assert target.read_text(encoding="utf-8") == "void parse(void) { unsafe(); }\n"
     rendered = (tc / "model_patch.diff").read_text(encoding="utf-8")
@@ -1174,6 +1173,10 @@ async def test_patch_apply_applies_validated_plan_and_writes_diff(tmp_path: Path
     assert victim.read_text(encoding="utf-8") == "unchanged\n"
     assert not (tc / "model_patch.diff").is_symlink()
     assert result.plan_approval is not None
+    private_approval = json.loads(
+        (session.identity_dir / "patch-approval.json").read_text(encoding="utf-8")
+    )
+    assert private_approval["replay_identity"] == identity
 
 
 async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path: Path) -> None:
@@ -1184,9 +1187,9 @@ async def test_patch_apply_blocks_and_makes_no_edit_on_forbidden_target(tmp_path
     target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
     before = target.read_bytes()
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
+    await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
-    plan = _patch_plan(target, identity)
+    plan = _patch_plan(target)
     plan["forbidden_paths"] = ["/src/project"]
     (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
     session = FakeSession(tc, source_dir=tmp_path / "src")
@@ -1209,9 +1212,9 @@ async def test_patch_apply_blocks_unresolved_evidence_reference(tmp_path: Path) 
     target = src / "vulnerable.c"
     target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
+    await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
     session = FakeSession(tc, source_dir=tmp_path / "src")
 
@@ -1249,38 +1252,17 @@ async def test_patch_apply_refuses_symlinked_plan_without_disclosure(tmp_path: P
     assert target.read_text(encoding="utf-8") == "void parse(void) { unsafe(); }\n"
 
 
-async def test_patch_apply_rejects_plan_for_different_replay_identity(tmp_path: Path) -> None:
-    src = tmp_path / "src" / "project"
-    src.mkdir(parents=True)
-    target = src / "vulnerable.c"
-    target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
-    tc = tmp_path / "testcase"
-    await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
-    (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
-    (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, "sha256:different")), encoding="utf-8"
-    )
-
-    result = await _executor(FakeSession(tc, source_dir=tmp_path / "src")).execute(
-        "secb_patch_apply", "[Patch-Applier] apply", _cve(), {"root_id": uuid4()}
-    )
-
-    assert result.success is False
-    assert "does not match the Host-frozen identity" in result.summary
-    assert not (tc / "model_patch.diff").exists()
-
-
 async def test_patch_apply_rejects_binary_changed_after_exploit_freeze(tmp_path: Path) -> None:
     src = tmp_path / "src" / "project"
     src.mkdir(parents=True)
     target = src / "vulnerable.c"
     target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
+    await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
     _seed_elf(tmp_path / "work" / "bin" / "app", payload=b"changed-after-freeze")
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
 
     result = await _executor(FakeSession(tc, source_dir=tmp_path / "src")).execute(
@@ -1298,12 +1280,12 @@ async def test_patch_apply_rejects_loader_dependency_changed_after_exploit_freez
     tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
     library_dir = worktree / "libfaad" / ".libs"
     _seed_faad_library(library_dir)
-    identity = await _freeze_faad_identity(tc, source_dir, cve)
+    await _freeze_faad_identity(tc, source_dir, cve)
     _seed_elf(library_dir / "libfaad.so.2.0.0", payload=b"changed-after-freeze")
 
     target = worktree / "vulnerable.c"
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
-    plan = _patch_plan(target, identity)
+    plan = _patch_plan(target)
     plan["target_file"] = "/src/faad2/vulnerable.c"
     plan["allowed_paths"] = ["/src/faad2"]
     (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
@@ -1325,13 +1307,13 @@ async def test_patch_apply_rejects_build_input_changed_after_exploit_freeze(
     target = src / "vulnerable.c"
     target.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
+    await _freeze_exploit_identity(tc, source_dir=tmp_path / "src")
     (tmp_path / "src" / "build.sh").write_text(
         "#!/bin/bash\necho changed\n", encoding="utf-8"
     )
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
 
     result = await _executor(FakeSession(tc, source_dir=tmp_path / "src")).execute(
@@ -1368,11 +1350,11 @@ async def test_patch_apply_rejects_tracked_source_changed_after_exploit_freeze(
         update={"base_commit": base_commit, "work_dir": "/src/project"}
     )
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
+    await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
     target.write_text("void parse(void) { unsafe(); }\n// drift\n", encoding="utf-8")
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
 
     result = await _executor(FakeSession(tc, source_dir=source_dir)).execute(
@@ -2041,6 +2023,27 @@ async def test_exploit_records_evidence_per_command(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_patch_validation_rejects_raw_plan_mutation_after_approval(
+    tmp_path: Path,
+) -> None:
+    # Given: A Host-approved plan whose raw bytes are changed without changing its JSON value
+    tc = tmp_path / "testcase"
+    await _seed_patch_inputs(tc)
+    plan_path = tc / "patch_plan.json"
+    plan_path.write_bytes(plan_path.read_bytes() + b"\n")
+    session = FakeSession(tc)
+
+    # When: Patch validation checks the private approval before running any command
+    result = await _executor(session).execute(
+        "secb_patch_validation", "[Patch-Validator] validate", _cve(), {"root_id": uuid4()}
+    )
+
+    # Then: Even whitespace-only raw drift invalidates the approval
+    assert result.success is False
+    assert "raw bytes changed after Host approval" in result.summary
+    assert session.commands == []
+
+
 async def test_patch_validation_pass_writes_verdict_and_logs(tmp_path: Path) -> None:
     # Given: a clean apply, a successful build, and 3/3 no-crash repro
     tc = tmp_path / "testcase"
@@ -2110,9 +2113,8 @@ async def test_patch_validation_reuses_frozen_faad_loader_path(tmp_path: Path) -
     assert exploit.success is True
 
     target = worktree / "vulnerable.c"
-    identity = (tc / "exploit_input_identity.txt").read_text(encoding="utf-8").strip()
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
-    plan = _patch_plan(target, identity)
+    plan = _patch_plan(target)
     plan["target_file"] = "/src/faad2/vulnerable.c"
     plan["allowed_paths"] = ["/src/faad2"]
     (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
@@ -2183,11 +2185,11 @@ async def test_patch_validation_rejects_rebuilt_loader_symlink_escape(
     tc, source_dir, worktree, cve = _seed_faad_exploit_inputs(tmp_path)
     library_dir = worktree / "libfaad" / ".libs"
     _seed_faad_library(library_dir)
-    identity = await _freeze_faad_identity(tc, source_dir, cve)
+    await _freeze_faad_identity(tc, source_dir, cve)
 
     target = worktree / "vulnerable.c"
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
-    plan = _patch_plan(target, identity)
+    plan = _patch_plan(target)
     plan["target_file"] = "/src/faad2/vulnerable.c"
     plan["allowed_paths"] = ["/src/faad2"]
     (tc / "patch_plan.json").write_text(json.dumps(plan), encoding="utf-8")
@@ -2534,10 +2536,10 @@ async def test_patch_validation_recheck_cleans_untracked_git_build_inputs(
         update={"base_commit": base_commit, "work_dir": "/src/project"}
     )
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
+    await _freeze_exploit_identity(tc, cve=cve, source_dir=source_dir)
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
     session = StatefulPatchSession(tc)
     approval = await _executor(session).execute(
@@ -2592,7 +2594,7 @@ async def test_patch_validation_recheck_accepts_cleaned_in_tree_output_parent(
     )
     binary_path = "/src/project/frontend/.libs/app"
     tc = tmp_path / "testcase"
-    identity = await _freeze_exploit_identity(
+    await _freeze_exploit_identity(
         tc,
         cve=cve,
         source_dir=source_dir,
@@ -2600,7 +2602,7 @@ async def test_patch_validation_recheck_accepts_cleaned_in_tree_output_parent(
     )
     (tc / "root_cause_analysis.txt").write_text("verified cause\n", encoding="utf-8")
     (tc / "patch_plan.json").write_text(
-        json.dumps(_patch_plan(target, identity)), encoding="utf-8"
+        json.dumps(_patch_plan(target)), encoding="utf-8"
     )
     session = StatefulPatchSession(tc, binary_path=binary_path)
     approval = await _executor(session).execute(

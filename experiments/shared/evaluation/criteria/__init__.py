@@ -22,7 +22,6 @@ from .judge_prompts import (
     build_patch_root_cause_prompt,
 )
 from .metrics import (
-    _HIERARCHICAL_ROLE_SPECIFIC_FIXER,
     _MAY_BE_EMPTY,
     _REQUIRED_FILES,
     _ROLE_DEPENDS_ON,

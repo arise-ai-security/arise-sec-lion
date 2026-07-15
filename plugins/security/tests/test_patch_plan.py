@@ -2,6 +2,9 @@
 
 import hashlib
 
+import pytest
+from pydantic import ValidationError
+
 from plugins.security.patch_plan import PatchApplier, PatchOperation, PatchPlan, PatchPlanValidator
 
 
@@ -18,7 +21,6 @@ def _plan(source_file, **updates) -> PatchPlan:
         "allowed_paths": ("/src/project",),
         "forbidden_paths": ("/testcase",),
         "required_postconditions": ("sanitizer finding absent",),
-        "pre_patch_exploit_identity": "sha256:poc-and-repro",
         "validation_commands": ("secb patch", "secb build", "secb repro"),
     }
     values.update(updates)
@@ -42,6 +44,47 @@ def test_patch_applier_applies_validated_literal_edit(tmp_path) -> None:
     assert result.status == "APPLIED"
     assert result.plan_sha256 == plan.sha256
     assert source.read_text(encoding="utf-8") == "void parse(void) { safe(); }\n"
+
+
+def test_patch_plan_contains_only_solver_authored_fields(tmp_path) -> None:
+    """Host replay identity stays private and outside the solver-authored plan."""
+
+    source = tmp_path / "project" / "vulnerable.c"
+    source.parent.mkdir()
+    source.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+
+    plan = _plan(source)
+
+    assert "pre_patch_exploit_identity" not in plan.model_dump()
+
+
+@pytest.mark.parametrize("field", ("pre_patch_exploit_identity", "arbitrary_key"))
+def test_patch_plan_rejects_unknown_top_level_fields(tmp_path, field: str) -> None:
+    # Given: A valid plan extended with a non-schema field
+    source = tmp_path / "project" / "vulnerable.c"
+    source.parent.mkdir()
+    source.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    payload = _plan(source).model_dump()
+    payload[field] = "must-not-be-accepted"
+
+    # When/Then: Strict schema validation rejects the field instead of discarding it
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        PatchPlan.model_validate(payload)
+
+
+def test_patch_plan_rejects_unknown_operation_fields(tmp_path) -> None:
+    # Given: A valid plan whose nested operation carries an arbitrary field
+    source = tmp_path / "project" / "vulnerable.c"
+    source.parent.mkdir()
+    source.write_text("void parse(void) { unsafe(); }\n", encoding="utf-8")
+    payload = _plan(source).model_dump()
+    operation = dict(payload["operations"][0])
+    operation["arbitrary_key"] = "must-not-be-accepted"
+    payload["operations"] = (operation,)
+
+    # When/Then: The nested schema rejects unknown fields too
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        PatchPlan.model_validate(payload)
 
 
 def test_patch_applier_makes_no_edit_when_hash_mismatches(tmp_path) -> None:

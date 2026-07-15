@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 class PatchOperation(BaseModel):
     """One exact source transformation anchored to unique text."""
 
-    model_config = {"frozen": True}
+    model_config = {"extra": "forbid", "frozen": True}
 
     kind: Literal["insert_before", "insert_after", "replace", "delete"]
     anchor: str = Field(min_length=1)
@@ -25,7 +25,7 @@ class PatchOperation(BaseModel):
 class PatchPlan(BaseModel):
     """Frozen Root-Cause-Analyst plan consumed literally by Patch-Applier."""
 
-    model_config = {"frozen": True}
+    model_config = {"extra": "forbid", "frozen": True}
 
     schema_version: Literal["1"] = "1"
     evidence_references: tuple[str, ...] = Field(min_length=1)
@@ -36,7 +36,6 @@ class PatchPlan(BaseModel):
     allowed_paths: tuple[str, ...] = Field(min_length=1)
     forbidden_paths: tuple[str, ...] = Field(min_length=1)
     required_postconditions: tuple[str, ...] = Field(min_length=1)
-    pre_patch_exploit_identity: str = Field(min_length=1)
     validation_commands: tuple[str, ...] = Field(min_length=1)
 
     @property

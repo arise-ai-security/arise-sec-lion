@@ -24,7 +24,6 @@ from plugins.security.deliverables import (
     ARTIFACT_DIRS,
     ARTIFACT_PATHS,
     EXPLOIT_VALIDATION_FIELDS,
-    HIERARCHICAL_ONLY,
     PATCH_VALIDATION_FIELDS,
     PHASE_COMMANDS,
     REQUIRED_FILES,
@@ -92,7 +91,6 @@ def _render_phase_partial(builder: PromptBuilder, cve: CVEInstance, phase: str) 
         "required_files": REQUIRED_FILES,
         "required_files_with_purpose": REQUIRED_FILES_WITH_PURPOSE,
         "validation_required": VALIDATION_REQUIRED,
-        "hierarchical_only": HIERARCHICAL_ONLY,
         "root_cause_block_fields": ROOT_CAUSE_BLOCK_FIELDS,
         "exploit_validation_fields": EXPLOIT_VALIDATION_FIELDS,
         "patch_validation_fields": PATCH_VALIDATION_FIELDS,
@@ -222,6 +220,11 @@ class TestFlatPromptHasNoSiblingWording:
         # only makes sense inside a multi-agent tree.
         lowered = prompt.lower()
         banned = (
+            "host",
+            "procedure",
+            "stopped_after_marker",
+            "frozen replay",
+            "recheck",
             "sibling",
             "peer",
             "handoff",
@@ -256,6 +259,26 @@ class TestFlatPromptHasNoSiblingWording:
         )
         assert "<context-update>" in worker
         assert "sibling" in worker.lower()
+
+    def test_flat_prompt_requires_common_fixer_analysis_without_host_assistance(self) -> None:
+        # Given: the generic flat prompt for a CVE task.
+        prompt = _builder().build_flat_prompt(
+            task_description="demo.cve-2024-0001",
+            agent_id=uuid4(),
+            domain_context=_cve(),
+        )
+
+        # Then: the flat solver owns the complete semantic Fixer contract.
+        assert "`/testcase/root_cause_analysis.txt`" in prompt
+        assert "`/testcase/patch_plan.json`" in prompt
+        assert "Compare at least two repair sites" in prompt
+        assert "PROPOSED_FIX_SITE:" in prompt
+        assert 'validation_commands=["secb patch", "secb build", "secb repro"]' in prompt
+
+        # And: it creates and checks the patch itself without a topology-only identity field.
+        assert "Only after both analysis artifacts exist, edit source exactly as planned" in prompt
+        assert "pre_patch_exploit_identity" not in prompt
+        assert "only the fresh external evaluator determines" in prompt
 
 
 class TestWorkerBranchFailsFastWithoutPhase:

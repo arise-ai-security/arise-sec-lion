@@ -28,7 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from core.domain.values.procedure import ProcedureEvidence, ProcedurePlanApproval, ProcedureResult
 from plugins.security.crash_signature import (
@@ -251,11 +251,12 @@ class _ReplayContract(BaseModel):
 class _PatchApproval(BaseModel):
     """Host-frozen link from a rendered patch to its replay identity."""
 
-    model_config = {"frozen": True}
+    model_config = {"extra": "forbid", "frozen": True}
 
-    schema_version: Literal["2"] = "2"
+    schema_version: Literal["3"] = "3"
     replay_identity: str
     plan_sha256: str
+    plan_raw_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     patch_sha256: str
     target_file: str
     preimage_sha256: str
@@ -838,19 +839,23 @@ async def _run_patch_apply(
     """Apply the reasoning worker's PatchPlan literally, or block without editing.
 
     The Root-Cause-Analyst authors ``patch_plan.json``; this applier NEVER reasons. It
-    validates the frozen plan against the sealed ``/src`` source (hash, unique
-    anchor, allow/forbid paths) and either applies it exactly and emits the diff
-    deliverable, or returns ``PATCH_PLAN_BLOCKED`` leaving every byte untouched.
+    independently validates the replay contract, validates the plan against the
+    sealed ``/src`` source (hash, unique anchor, allow/forbid paths), and either
+    emits the exact diff bound to the private replay identity or returns
+    ``PATCH_PLAN_BLOCKED`` leaving every byte untouched.
     """
     evidence: list[ProcedureEvidence] = []
     tc = session.testcase_dir
     _clear_patch_approval(session)
-    plan_text = _read(tc / _PATCH_PLAN_JSON)
-    if not plan_text.strip():
+    try:
+        plan_bytes = _read_regular_bytes(tc / _PATCH_PLAN_JSON)
+    except OSError:
+        plan_bytes = b""
+    if not plan_bytes.strip():
         reason = f"{_PATCH_PLAN_JSON} missing or empty — reasoning worker authored no PatchPlan"
         return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
     try:
-        plan = PatchPlan.model_validate_json(plan_text)
+        plan = PatchPlan.model_validate_json(plan_bytes)
     except ValidationError as exc:
         reason = f"PatchPlan schema invalid ({exc.error_count()} errors)"
         return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
@@ -858,12 +863,6 @@ async def _run_patch_apply(
     replay_contract, replay_reason = await _validate_replay_contract(session, cve)
     if replay_contract is None:
         reason = replay_reason or "pre-patch replay identity is unavailable"
-        return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
-    if plan.pre_patch_exploit_identity != replay_contract.identity:
-        reason = (
-            "PatchPlan pre_patch_exploit_identity does not match the Host-frozen "
-            f"identity {replay_contract.identity}"
-        )
         return _failed(_PROCEDURE_PATCH_APPLY, f"Patch apply BLOCKED: {reason}", reason, evidence)
 
     resolved_evidence = _resolved_plan_evidence(tc, plan.evidence_references)
@@ -899,6 +898,7 @@ async def _run_patch_apply(
         _PatchApproval(
             replay_identity=replay_contract.identity,
             plan_sha256=outcome.plan_sha256,
+            plan_raw_sha256=hashlib.sha256(plan_bytes).hexdigest(),
             patch_sha256=_sha256_file(tc / _MODEL_PATCH),
             target_file=plan.target_file,
             preimage_sha256=hashlib.sha256(
@@ -1691,7 +1691,13 @@ def _validate_patch_approval(
     if approval.patch_sha256 != hashlib.sha256(patch_text.encode("utf-8")).hexdigest():
         return None, "model_patch.diff changed after Host approval"
     try:
-        plan = PatchPlan.model_validate_json(_read(session.testcase_dir / _PATCH_PLAN_JSON))
+        plan_bytes = _read_regular_bytes(session.testcase_dir / _PATCH_PLAN_JSON)
+    except OSError:
+        return None, "patch_plan.json changed or became unavailable after Host approval"
+    if hashlib.sha256(plan_bytes).hexdigest() != approval.plan_raw_sha256:
+        return None, "patch_plan.json raw bytes changed after Host approval"
+    try:
+        plan = PatchPlan.model_validate_json(plan_bytes)
     except ValidationError:
         return None, "patch_plan.json changed or became invalid after Host approval"
     if plan.sha256 != approval.plan_sha256:

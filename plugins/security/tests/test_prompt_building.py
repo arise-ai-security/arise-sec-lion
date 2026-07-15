@@ -670,6 +670,7 @@ class TestSecurityPromptBuilding:
         assert "Work read-only: do not edit source" in prompt
         assert "/testcase/patch_plan.json" in prompt
         assert "Compute the current target file's lowercase SHA-256 and write" in prompt
+        assert "pre_patch_exploit_identity" not in prompt
         assert "Create `/testcase/model_patch.diff`" not in prompt
         assert "Develop the fix" not in prompt
 

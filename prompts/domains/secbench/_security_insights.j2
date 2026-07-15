@@ -26,7 +26,9 @@
 
 5. **For Pointer Errors and Type Confusion**: explicitly state that the Root-Cause-Analyst MUST perform one-shot source instrumentation (inject `fprintf` at the crash site to print type tag, run `secb build`, run `secb repro`, revert) and that static tools + `gdb bt` alone are insufficient evidence — reject the analyst's deliverable if it contains no runtime-observation section.
 
-**⚠️ Fixer-specific structured-handoff requirement.** The `[Root-Cause-Analyst]` subtask's `success_criteria` MUST require that `{{ hierarchical_only["Fixer"]|join('`, `') }}` contains a machine-readable block at the bottom of the file with these exact keys:
+**⚠️ Fixer-specific structured-analysis requirement.** The `[Root-Cause-Analyst]` owns
+`{{ artifact_paths.root_cause_analysis }}` and `{{ artifact_paths.patch_plan }}`. Its
+root-cause analysis MUST contain a machine-readable block at the bottom with these exact keys:
 
 ```
 {% for key, value in root_cause_block_fields -%}
@@ -34,4 +36,6 @@
 {% endfor -%}
 ```
 
-The `[Patch-Applier]` subtask is procedural: apply the approved manager PatchPlan literally. On any hash, anchor, evidence, allowlist, or postcondition mismatch, emit `PATCH_PLAN_BLOCKED` and make no edits. It MUST NOT invent or broaden the patch.
+The `[Patch-Applier]` applies the approved PatchPlan literally. On any hash, anchor,
+evidence, allowlist, or postcondition mismatch, emit `PATCH_PLAN_BLOCKED` and make no edits.
+It MUST NOT invent or broaden the patch.

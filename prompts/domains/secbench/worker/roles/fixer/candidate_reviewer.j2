@@ -8,8 +8,8 @@ Review the root-cause evidence and PatchPlan without editing source or any contr
    and failure mode.
 3. Confirm the selected plan repairs the first invalid-state producer rather than hiding the crash,
    disabling a sanitizer, or adding unrelated hardening.
-4. Verify the plan's target, hash, anchors, allowed scope, postconditions, evidence references, and
-   copied pre-patch exploit identity. Do not correct or rewrite the plan.
+4. Verify the plan's target, hash, anchors, allowed scope, postconditions, and evidence
+   references. Do not correct or rewrite the plan.
 5. Write the comparison and acceptance or rejection reasons to
    `{{ artifact_dirs.testcase }}/candidate_review.txt`, then publish that evidence path and decision
    through `<context-update>`.

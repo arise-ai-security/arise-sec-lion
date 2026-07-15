@@ -1,8 +1,9 @@
-# N1 — one flat OpenHands session with subagents disabled.
+# N1 — one flat OpenHands session with subagents and in-run Host procedures disabled.
 extends: config/config.yaml
 
 overrides:
   orchestration.mode: flat
+  orchestration.procedural_dispatch: false
   orchestration.skip_judge: true
   orchestration.max_run_duration_seconds: 14400
   orchestration.concurrency.max_agent_step_seconds: 3600

@@ -29,7 +29,7 @@ def test_detect_topology_from_manifest(tmp_path) -> None:
     n_id = uuid4()
     (tmp_path / str(n_id)).mkdir()
     (tmp_path / str(n_id) / "run_manifest.json").write_text(
-        json.dumps({"cell": "N1", "study_id": "n1-openhands-linear"})
+        json.dumps({"cell": "N1", "study_id": "n1-secbench-full"})
     )
     b_id = uuid4()
     (tmp_path / str(b_id)).mkdir()

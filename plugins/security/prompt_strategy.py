@@ -9,7 +9,6 @@ from plugins.security.deliverables import (
     ARTIFACT_DIRS,
     ARTIFACT_PATHS,
     EXPLOIT_VALIDATION_FIELDS,
-    HIERARCHICAL_ONLY,
     PATCH_VALIDATION_FIELDS,
     PHASE_COMMANDS,
     REQUIRED_FILES,
@@ -176,7 +175,6 @@ def _with_contract_context(cve_ctx: dict[str, object]) -> dict[str, object]:
     cve_ctx["required_files"] = REQUIRED_FILES
     cve_ctx["required_files_with_purpose"] = REQUIRED_FILES_WITH_PURPOSE
     cve_ctx["validation_required"] = VALIDATION_REQUIRED
-    cve_ctx["hierarchical_only"] = HIERARCHICAL_ONLY
     cve_ctx["root_cause_block_fields"] = ROOT_CAUSE_BLOCK_FIELDS
     cve_ctx["exploit_validation_fields"] = EXPLOIT_VALIDATION_FIELDS
     cve_ctx["patch_validation_fields"] = PATCH_VALIDATION_FIELDS
@@ -412,8 +410,9 @@ class SecBenchPromptStrategy:
         Renders the CVE problem statement plus ``flat_pipeline.j2``, a thin
         sequential wrapper that includes the same shared phase partials
         (``domains/secbench/phases/{_mindset,build,exploit,fix,report}.j2``)
-        the BEF workers receive, so every arm emits byte-identical
-        ``/testcase/`` artifacts. The wrapper adds only the single-agent,
+        used by whole-phase worker fallbacks. Catalog roles derive their owned
+        outputs from the same deliverable constants, so every arm emits the same
+        ``/testcase/`` contract. The wrapper adds only the single-agent,
         four-phases-in-order framing — no manager, no siblings, no handoff.
         The role/operation/worker templates are intentionally NOT rendered
         here — those encode the tree topology's engineering and would

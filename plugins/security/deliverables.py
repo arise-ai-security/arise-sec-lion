@@ -75,6 +75,8 @@ REQUIRED_FILES: Final[dict[str, tuple[str, ...]]] = {
         ARTIFACT_PATHS["repro_script"],
     ),
     "Fixer": (
+        ARTIFACT_PATHS["root_cause_analysis"],
+        ARTIFACT_PATHS["patch_plan"],
         ARTIFACT_PATHS["model_patch"],
     ),
     "Reporter": (
@@ -115,8 +117,16 @@ REQUIRED_FILES_WITH_PURPOSE: Final[dict[str, list[dict[str, str]]]] = {
     ],
     "Fixer": [
         {
+            "path": ARTIFACT_PATHS["root_cause_analysis"],
+            "purpose": "evidence-grounded causal analysis with the exact fix-site block",
+        },
+        {
+            "path": ARTIFACT_PATHS["patch_plan"],
+            "purpose": "structured exact-edit plan grounded in the root-cause analysis",
+        },
+        {
             "path": ARTIFACT_PATHS["model_patch"],
-            "purpose": "git-apply-able against the base commit",
+            "purpose": "git-apply-able against the Builder-adjusted baseline",
         },
     ],
     "Reporter": [
@@ -132,22 +142,12 @@ REQUIRED_FILES_WITH_PURPOSE: Final[dict[str, list[dict[str, str]]]] = {
 }
 
 # Artifacts that the phase contracts explicitly call "required, exact name"
-# (the validation verdict files written inside the gated blocks).
+# (the in-run diagnostic validation files written inside the gated blocks).
 # They are not in the classic _mindset table but are treated as mandatory
 # by every prompt path that includes the phase partials.
 VALIDATION_REQUIRED: Final[dict[str, tuple[str, ...]]] = {
     "Exploiter": (ARTIFACT_PATHS["exploit_validation"],),
     "Fixer": (ARTIFACT_PATHS["patch_validation"],),
-}
-
-# Additional files that become mandatory only when assessment decomposes a
-# phase into leaf roles (injected into the relevant subtask's success_criteria
-# by assess.j2). Evaluation uses topology detection to know when they apply.
-HIERARCHICAL_ONLY: Final[dict[str, tuple[str, ...]]] = {
-    "Fixer": (
-        ARTIFACT_PATHS["root_cause_analysis"],
-        ARTIFACT_PATHS["patch_plan"],
-    ),
 }
 
 # Files that are legitimately allowed to be zero-byte on success.

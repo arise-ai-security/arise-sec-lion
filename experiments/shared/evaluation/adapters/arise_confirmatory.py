@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from pydantic import TypeAdapter, ValidationError
 
+from config.overlay import resolve_overlay
 from experiments.shared import harness, runners
 from experiments.shared.evaluation.combined_verdict import CombinedVerdict, REPLAY_COUNT
 from experiments.shared.evaluation.confirmatory_runner import (
@@ -35,6 +36,30 @@ def _record(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} is not an object")
     return value
+
+
+def _validate_n1_control_config(config: dict[str, Any]) -> None:
+    """Reject N1 configurations that expose orchestration assistance in-run."""
+    orchestration = _record(config.get("orchestration"), "N1 orchestration")
+    worker = _record(config.get("worker"), "N1 worker")
+    tool_params = _record(worker.get("tool_params"), "N1 worker.tool_params")
+    openhands = _record(tool_params.get("openhands"), "N1 worker.tool_params.openhands")
+    requirements = (
+        (orchestration.get("mode") == "flat", "orchestration.mode must be flat"),
+        (
+            orchestration.get("procedural_dispatch") is False,
+            "orchestration.procedural_dispatch must be explicitly false",
+        ),
+        (orchestration.get("skip_judge") is True, "orchestration.skip_judge must be true"),
+        (worker.get("tool") == "openhands", "worker.tool must be openhands"),
+        (
+            openhands.get("enable_subagents") is False,
+            "worker.tool_params.openhands.enable_subagents must be explicitly false",
+        ),
+    )
+    violations = [message for valid, message in requirements if not valid]
+    if violations:
+        raise ValueError("N1 control configuration is invalid: " + "; ".join(violations))
 
 
 def _sequence(value: object, label: str) -> list[Any] | tuple[Any, ...]:
@@ -202,6 +227,32 @@ def _authoritative_success(verdict: dict[str, object]) -> tuple[bool, bool]:
         raise ValueError("authoritative evaluator success fields disagree")
     mechanical = _record(combined.get("mechanical"), "combined.mechanical")
     mechanical_passed = _boolean(mechanical, "passed", "combined.mechanical")
+    artifact_completeness = _record(
+        mechanical.get("artifact_completeness"),
+        "combined.mechanical.artifact_completeness",
+    )
+    artifacts_passed = _boolean(
+        artifact_completeness,
+        "passed",
+        "combined.mechanical.artifact_completeness",
+    )
+    required_artifacts = _sequence(
+        artifact_completeness.get("required"),
+        "combined.mechanical.artifact_completeness.required",
+    )
+    missing_artifacts = _sequence(
+        artifact_completeness.get("missing_or_vacuous"),
+        "combined.mechanical.artifact_completeness.missing_or_vacuous",
+    )
+    if (
+        not required_artifacts
+        or any(not isinstance(path, str) for path in required_artifacts)
+        or any(not isinstance(path, str) for path in missing_artifacts)
+        or not set(missing_artifacts).issubset(required_artifacts)
+        or artifacts_passed == bool(missing_artifacts)
+        or (mechanical_passed and not artifacts_passed)
+    ):
+        raise ValueError("combined artifact-completeness gate is inconsistent")
     if _integer(mechanical, "replay_count", "combined.mechanical") != REPLAY_COUNT:
         raise ValueError("authoritative mechanical verdict lacks three replays")
     _validate_crash_signature(
@@ -303,6 +354,9 @@ class AriseConfirmatoryAdapter:
             raise ValueError(f"confirmatory cells are not declared: {sorted(missing)}")
         if self._preregistration.get("arms") != [n1_cell, b4_cell]:
             raise ValueError("preregistered arms do not match the requested confirmatory cells")
+        n1_config_path = study_root / str(cells[n1_cell]["config"])
+        n1_config = resolve_overlay(n1_config_path, repo_root=self._repo_root)
+        _validate_n1_control_config(n1_config)
         self._validate_oracles()
         plans_path = study_root / str(
             self._preregistration.get("regression", {}).get(
