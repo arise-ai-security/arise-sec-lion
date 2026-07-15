@@ -4,7 +4,7 @@
 #   docker compose --profile local up -d           # Start local dev (with local DB)
 #   docker compose --profile dev up -d             # Start dev (Supabase DB, no local DB)
 #   docker compose --profile prod up -d            # Start production
-#   docker compose --profile test up -d            # Start test DB only
+#   docker compose --profile test up -d db         # Start the shared local DB for tests
 
 services:
   # --- Local profile (local PostgreSQL) ---
@@ -68,18 +68,18 @@ services:
     command: sh -c "npm install && npm run build && npm run dev -- --host 0.0.0.0"
 
   db:
-    profiles: [local]
-    image: postgres:16-alpine
+    profiles: [local, test, prod]
+    image: pgvector/pgvector:pg16
     container_name: postgres-main
-    env_file: .env
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - ../data/postgres:/var/lib/postgresql/data
       - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./create_local_test_database.sql:/docker-entrypoint-initdb.d/02-test-database.sql:ro
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-arise}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+      POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: ${POSTGRES_DB:-arise_events}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arise} -d ${POSTGRES_DB:-arise_events}"]
@@ -145,27 +145,6 @@ services:
     env_file: .env
     environment:
       ARISE_INFRA_POSTGRES_HOST: db
-
-  # --- Test profile ---
-  test-db:
-    profiles: [test]
-    image: postgres:16-alpine
-    container_name: arise-test-db
-    environment:
-      POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: testpass
-      POSTGRES_DB: testdb
-    ports:
-      - "5433:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
-    volumes:
-      - ../infrastructure/sql/create_events_table.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
 volumes:
   secbench_output:  # Shared volume for SEC-bench artifacts between containers

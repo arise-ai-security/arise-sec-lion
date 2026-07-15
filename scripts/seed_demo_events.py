@@ -4,7 +4,7 @@
 Constructs actual Pydantic event objects to guarantee correct payloads.
 
 Usage:
-    POSTGRES_PASSWORD=arise python scripts/seed_demo_events.py
+    python scripts/seed_demo_events.py
 """
 
 import asyncio
@@ -37,7 +37,7 @@ from infrastructure.adapters.postgres_event_store import PostgresEventStore
 
 
 async def main():
-    store = PostgresEventStore("postgresql://arise:arise@localhost:5432/arise_events")
+    store = PostgresEventStore("postgresql://arise@localhost:5432/arise_events")
     await store.connect()
 
     # Clear existing data

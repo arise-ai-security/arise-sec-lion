@@ -7,8 +7,8 @@ costs incurred, completions, retries, verifications, etc. Useful for
 post-mortem analysis of a single worker's execution.
 
 Usage:
-    POSTGRES_PASSWORD=arise python scripts/show_worker_events.py <worker_id>
-    POSTGRES_PASSWORD=arise python scripts/show_worker_events.py <worker_id> \\
+    python scripts/show_worker_events.py <worker_id>
+    python scripts/show_worker_events.py <worker_id> \\
         --max-thought-chars 4000
 """
 

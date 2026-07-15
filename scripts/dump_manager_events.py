@@ -45,7 +45,7 @@ async def _connect() -> asyncpg.Connection:
         host=os.environ.get("POSTGRES_HOST", "localhost"),
         port=int(os.environ.get("POSTGRES_PORT", "5432")),
         user=os.environ.get("POSTGRES_USER", "arise"),
-        password=os.environ["POSTGRES_PASSWORD"],
+        password=os.environ.get("POSTGRES_PASSWORD"),
         database=os.environ.get("POSTGRES_DB", "arise_events"),
     )
 

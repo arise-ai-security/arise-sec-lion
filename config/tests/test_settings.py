@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -17,8 +16,8 @@ BASE_CONFIG = REPO_ROOT / "config" / "config.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _postgres_password(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POSTGRES_PASSWORD", "test_pw")
+def _passwordless_local_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
 
 
 def _load_base_config() -> dict:
@@ -181,7 +180,10 @@ def test_api_settings_loads_base_config_without_agent_models() -> None:
 
     settings = ApiSettings.from_yaml(BASE_CONFIG)
 
-    assert settings.database.password == os.environ["POSTGRES_PASSWORD"]
+    assert settings.database.password is None
+    assert settings.database.connection_string == (
+        "postgresql://arise@localhost:5432/arise_events"
+    )
     assert settings.worker.tool == "openhands"
     assert settings.worker.timeout == 1000
     assert settings.orchestration.max_retries == 3

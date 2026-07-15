@@ -3,23 +3,11 @@
 These tests require a PostgreSQL database.
 
 Setup with Docker Compose (recommended):
-    # Start test database
-    docker compose -f docker-compose.test.yml up -d
-
+    # Start the one local PostgreSQL container and create its isolated test database
+    docker compose -f deployment/docker-compose.yml --profile test up -d db
     # Run integration tests
-    TEST_DB_URL="postgresql://testuser:testpass@localhost:5433/testdb" \\
-        uv run pytest tests/infrastructure/test_event_store.py -v
-
-    # Stop database when done
-    docker compose -f docker-compose.test.yml down
-
-    # Clean up (remove volumes)
-    docker compose -f docker-compose.test.yml down -v
-
-Alternative (using docker run):
-    docker run --name test-postgres -e POSTGRES_PASSWORD=test -p 5432:5432 -d postgres:16
-    TEST_DB_URL="postgresql://postgres:test@localhost:5432/postgres" \\
-        uv run pytest tests/infrastructure/test_event_store.py -v
+    TEST_DB_URL="postgresql://arise@127.0.0.1:5432/arise_test" \\
+        uv run pytest infrastructure/tests/test_event_store.py -v
 
 If TEST_DB_URL environment variable is not set, tests will be skipped.
 """

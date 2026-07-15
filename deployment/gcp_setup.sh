@@ -160,13 +160,9 @@ else
   echo "Required secrets (press Enter to leave blank and edit manually later):"
   echo
 
-  read -r -p "  POSTGRES_PASSWORD (required): " _pg_pass
   read -r -p "  ANTHROPIC_API_KEY (required for A/B cells): " _ant_key
   read -r -p "  OPENAI_API_KEY (optional, for non-Claude models): " _oai_key
 
-  if [[ -n "$_pg_pass" ]]; then
-    sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${_pg_pass}|" "$ENV_FILE"
-  fi
   if [[ -n "$_ant_key" ]]; then
     sed -i "s|^# *ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${_ant_key}|" "$ENV_FILE"
   fi
@@ -187,7 +183,6 @@ fi
 
 # Verify required values are present
 source "$ENV_FILE"
-[[ -n "${POSTGRES_PASSWORD:-}" ]] || { echo "ERROR: POSTGRES_PASSWORD is empty in $ENV_FILE"; exit 1; }
 [[ -n "${ANTHROPIC_API_KEY:-}" ]] || echo "WARNING: ANTHROPIC_API_KEY is not set — A/B cells will fail at runtime"
 
 # ─── Step 7: Start Postgres + build secbench images ───────────────────────────
@@ -199,14 +194,14 @@ cd "$REPO_DIR"
 sudo docker compose -f deployment/docker-compose.yml --profile local up -d db
 info "Waiting for Postgres health check..."
 for i in $(seq 1 30); do
-  if sudo docker exec arise-db pg_isready -U "${POSTGRES_USER:-arise}" -d "${POSTGRES_DB:-arise_events}" &>/dev/null; then
+  if sudo docker exec postgres-main pg_isready -U "${POSTGRES_USER:-arise}" -d "${POSTGRES_DB:-arise_events}" &>/dev/null; then
     success "Postgres is ready"
     break
   fi
   sleep 2
   if [[ $i -eq 30 ]]; then
     echo "ERROR: Postgres did not become healthy after 60s"
-    sudo docker logs arise-db --tail 30
+    sudo docker logs postgres-main --tail 30
     exit 1
   fi
 done
@@ -272,7 +267,7 @@ check "uv"              uv --version
 check "docker daemon"   sudo docker info
 check "claude CLI"      claude --version
 check "Python env"      uv run python -c "import core"
-check "Postgres"        sudo docker exec arise-db pg_isready -U "${POSTGRES_USER:-arise}" -d "${POSTGRES_DB:-arise_events}"
+check "Postgres"        sudo docker exec postgres-main pg_isready -U "${POSTGRES_USER:-arise}" -d "${POSTGRES_DB:-arise_events}"
 
 echo
 if [[ "$PASS" == "true" ]]; then

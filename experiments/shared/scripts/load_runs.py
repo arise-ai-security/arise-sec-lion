@@ -42,8 +42,8 @@ def default_pool_roots() -> list[Path]:
     """Return the pool roots scanned when no explicit roots are supplied.
 
     Walks ``<repo_root>/runs`` plus the configured ``settings.output.directory``
-    (loaded lazily so tests that don't need Settings — and don't have a
-    ``POSTGRES_PASSWORD`` available — aren't forced to instantiate it).
+    (loaded lazily so tests that do not need full Settings are not forced to
+    instantiate it).
     """
     repo_root = get_repo_root()
     roots: list[Path] = [repo_root / "runs"]

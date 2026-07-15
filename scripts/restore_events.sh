@@ -4,9 +4,6 @@ set -euo pipefail
 # Restore a gzipped (or plain) SQL dump of the `events` table.
 # Safety: aborts if events table is non-empty unless --truncate or --append given.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/deployment/.env"
-
 MODE="abort"
 DUMP_PATH=""
 for arg in "$@"; do
@@ -29,23 +26,11 @@ if [[ ! -f "$DUMP_PATH" ]]; then
   exit 1
 fi
 
-if [[ -z "${POSTGRES_PASSWORD:-}" && -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
-
-POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
-POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_USER="${POSTGRES_USER:-arise}"
 POSTGRES_DB="${POSTGRES_DB:-arise_events}"
+POSTGRES_CONTAINER="postgres-main"
 
-if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
-  echo "ERROR: POSTGRES_PASSWORD is required (set env var or populate $ENV_FILE)" >&2
-  exit 1
-fi
-for bin in psql gunzip; do
+for bin in docker gunzip; do
   if ! command -v "$bin" >/dev/null 2>&1; then
     echo "ERROR: '$bin' not found in PATH" >&2
     exit 1
@@ -53,8 +38,7 @@ for bin in psql gunzip; do
 done
 
 psql_run() {
-  PGPASSWORD="$POSTGRES_PASSWORD" psql \
-    --host="$POSTGRES_HOST" --port="$POSTGRES_PORT" \
+  docker exec -i "$POSTGRES_CONTAINER" psql \
     --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" "$@"
 }
 
@@ -65,7 +49,7 @@ if [[ "$EXISTING" -gt 0 && "$MODE" == "abort" ]]; then
   exit 1
 fi
 
-echo "Restoring $DUMP_PATH -> ${POSTGRES_USER}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB} (mode=$MODE, existing rows=$EXISTING)" >&2
+echo "Restoring $DUMP_PATH -> ${POSTGRES_CONTAINER}/${POSTGRES_DB} (mode=$MODE, existing rows=$EXISTING)" >&2
 
 # Stream the dump (with optional TRUNCATE prepended) into psql inside one
 # transaction so a mid-restore failure can't leave the table empty/partial.

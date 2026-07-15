@@ -4,7 +4,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set in the process environment}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the process environment}"
 
 export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}"

@@ -5,7 +5,7 @@ When a run completes, write an ``effective_config.yaml`` file inside
 + overrides applied + env-var injection). This is the per-run provenance
 artifact future researchers read to know exactly what configuration ran.
 
-The dump redacts ``database.password`` because it is sourced from the
+The dump redacts ``database.password`` when it is sourced from the optional
 ``POSTGRES_PASSWORD`` environment variable. Every other Settings field is
 either YAML-defined or a non-sensitive runtime default, so it is safe to
 record verbatim.
@@ -64,8 +64,8 @@ def snapshot_effective_config(*, run_id: UUID, settings: Settings, run_dir: Path
 def _redact(payload: dict[str, Any]) -> dict[str, Any]:
     """Replace known-sensitive fields with a placeholder before serialization.
 
-    ``database.password`` is sourced from ``POSTGRES_PASSWORD`` and must not
-    end up in a per-run artifact that researchers may share or archive.
+    ``database.password`` may be sourced from ``POSTGRES_PASSWORD`` and must
+    not end up in a per-run artifact that researchers may share or archive.
     """
     database = payload.get("database")
     if isinstance(database, dict) and "password" in database:

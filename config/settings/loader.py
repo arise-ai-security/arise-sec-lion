@@ -55,9 +55,10 @@ def _inject_env_database(config: dict[str, Any]) -> dict[str, Any]:
 
     db_config = dict(merged.get("database", {}))
     postgres_password = os.getenv("POSTGRES_PASSWORD")
-    if not postgres_password:
-        raise ValueError("POSTGRES_PASSWORD environment variable is required")
-    db_config["password"] = postgres_password
+    if postgres_password:
+        db_config["password"] = postgres_password
+    else:
+        db_config.pop("password", None)
     if os.getenv("POSTGRES_HOST"):
         db_config["host"] = os.getenv("POSTGRES_HOST")
     postgres_port = os.getenv("POSTGRES_PORT")

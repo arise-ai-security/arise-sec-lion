@@ -13,7 +13,7 @@ class DatabaseConfig(BaseModel):
     host: str
     port: int
     user: str
-    password: str
+    password: str | None = None
     name: str
     # asyncpg pool sizing (G.1). Default matches the historical asyncpg
     # defaults of (min=10, max=10) so unchanged deployments behave the
@@ -24,4 +24,7 @@ class DatabaseConfig(BaseModel):
     @property
     def connection_string(self) -> str:
         """Build PostgreSQL connection string."""
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        credentials = self.user
+        if self.password is not None:
+            credentials = f"{credentials}:{self.password}"
+        return f"postgresql://{credentials}@{self.host}:{self.port}/{self.name}"

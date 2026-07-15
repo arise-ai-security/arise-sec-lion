@@ -6,9 +6,9 @@ descendant agent with its worker_id and the bracketed role name parsed
 from its task description (e.g., ``[Analysis] ...`` -> ``Analysis``).
 
 Usage:
-    POSTGRES_PASSWORD=arise python scripts/list_run_workers.py <run_id>
-    POSTGRES_PASSWORD=arise python scripts/list_run_workers.py <run_id> --include-boss
-    POSTGRES_PASSWORD=arise python scripts/list_run_workers.py <run_id> --json
+    python scripts/list_run_workers.py <run_id>
+    python scripts/list_run_workers.py <run_id> --include-boss
+    python scripts/list_run_workers.py <run_id> --json
 """
 
 from __future__ import annotations
