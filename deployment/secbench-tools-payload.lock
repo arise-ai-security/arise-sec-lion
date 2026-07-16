@@ -1,0 +1,5 @@
+# Maintainer-published tag and colleague-facing immutable reference.
+# After publishing a new generation, replace SHARED_TOOLS_IMAGE with its digest.
+SHARED_TOOLS_TAG=cheshire0814/secb-tools:payload-focal-amd64-v1
+SHARED_TOOLS_IMAGE=cheshire0814/secb-tools:payload-focal-amd64-v1
+SHARED_TOOLS_GENERATION=payload-focal-amd64-v1

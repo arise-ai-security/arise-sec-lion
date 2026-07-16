@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+PYTHONPATH="/opt/arise-mcp/site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH
+exec /usr/local/bin/python3.12 "$@"

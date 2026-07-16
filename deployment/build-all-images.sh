@@ -6,6 +6,14 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SINGLE_BUILDER="$ROOT_DIR/deployment/build-secbench-tools.sh"
 FIXTURE_DIR="$ROOT_DIR/plugins/security/tests/fixtures"
+PAYLOAD_LOCK="$ROOT_DIR/deployment/secbench-tools-payload.lock"
+
+if [ ! -f "$PAYLOAD_LOCK" ]; then
+  printf 'Missing shared-tools lock: %s\n' "$PAYLOAD_LOCK" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+. "$PAYLOAD_LOCK"
 
 usage() {
   cat <<'EOF'
@@ -43,10 +51,12 @@ local_image_ready() {
   local metadata
   metadata="$(
     docker image inspect \
-      --format '{{.Architecture}}|{{.Descriptor.MediaType}}' "$target" 2>/dev/null
+      --format '{{.Architecture}}|{{.Descriptor.MediaType}}|{{index .Config.Labels "io.arise.secbench.tools"}}' \
+      "$target" 2>/dev/null
   )" || return 1
   [[ "$metadata" == amd64\|* ]] || return 1
-  [[ "$metadata" != *image.index* && "$metadata" != *manifest.list* ]]
+  [[ "$metadata" != *image.index* && "$metadata" != *manifest.list* ]] || return 1
+  [[ "$metadata" == *\|"$SHARED_TOOLS_GENERATION" ]]
 }
 
 pull_cached_image() {
@@ -60,7 +70,13 @@ pull_cached_image() {
       return 1
     fi
     docker image rm "$remote" >/dev/null 2>&1 || true
-    return 0
+    if local_image_ready "$target"; then
+      return 0
+    fi
+    printf 'Ignoring stale registry image without payload generation %s: %s\n' \
+      "$SHARED_TOOLS_GENERATION" "$remote" >&2
+    docker image rm "$target" >/dev/null 2>&1 || true
+    return 1
   fi
 
   # The first public cache generation has amd64 configs and binaries under OCI
@@ -96,6 +112,12 @@ else:
     return 1
   fi
   docker image rm "$child" >/dev/null 2>&1 || true
+  if ! local_image_ready "$target"; then
+    printf 'Ignoring stale registry image without payload generation %s: %s\n' \
+      "$SHARED_TOOLS_GENERATION" "$remote" >&2
+    docker image rm "$target" >/dev/null 2>&1 || true
+    return 1
+  fi
 }
 
 # Worker mode: provision one fixture and append one result line to $RESULTS.
@@ -206,7 +228,7 @@ RESULTS="$(mktemp -t build-all-images.XXXXXX)"
 STOP_FILE=""
 [ "$FAIL_FAST" -eq 1 ] && STOP_FILE="$(mktemp -u -t build-all-images-stop.XXXXXX)"
 trap 'rm -f "$RESULTS" "$STOP_FILE"' EXIT
-export RESULTS STOP_FILE SINGLE_BUILDER TOOLS_IMAGE_REGISTRY
+export RESULTS STOP_FILE SINGLE_BUILDER TOOLS_IMAGE_REGISTRY SHARED_TOOLS_GENERATION
 
 if [ "$PARALLEL" -le 1 ]; then
   for fx in "${FIXTURES[@]}"; do run_worker "$fx"; done

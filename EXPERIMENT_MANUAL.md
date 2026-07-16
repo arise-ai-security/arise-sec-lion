@@ -40,22 +40,24 @@ Dashboard at http://localhost:8000.
 
 ## 3. Build only the images this study needs
 
-For the 300-instance N1 roster, publish one shared toolchain instead of building
-300 independent overlays:
+For the 300-instance N1 roster, publish one CVE-independent `/opt` payload once:
 
 ```bash
-deployment/build-secbench-toolchain.sh cheshire0814
-deployment/publish-secbench-tools.sh cheshire0814 \
-  --tool-image cheshire0814/secb-tools:toolchain-focal-amd64-v1 \
-  --parallel 8
+deployment/publish-secbench-tools-payload.sh --push
 ```
 
-The first command performs the heavy installation once. The second creates the
-CVE tags in Docker Hub by reusing those exact layers and each `hwiwonlee` base;
-it does not download the image roster to the host. Pass `--force` when replacing
-older independently built tags so one experiment uses one toolchain digest.
+This maintainer-only command packages Node, Claude Code, and the security MCP
+runtime under `/opt`, validates them on the pinned N1 ABI, and publishes one
+image. Pin the printed digest in `deployment/secbench-tools-payload.lock` before
+handoff.
 
-For small local studies, `deployment/build-all-images.sh` remains available.
+The N1 runner still assembles one image per CVE locally. On a final-image cache
+miss it pulls that CVE's `hwiwonlee` base and links in the shared payload, without
+reinstalling the heavy common tools. It runs and evicts images in bounded waves;
+the tagged payload stays local and is reused for the full roster.
+
+For small local studies, `deployment/build-all-images.sh` remains available and
+uses the same payload automatically.
 
 `deployment/build-all-images.sh` accepts fixture paths as positional args and skips images already on disk. Feed it the fixtures listed in your study's `dataset.yaml`:
 

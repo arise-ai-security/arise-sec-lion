@@ -3,6 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKERFILE="$ROOT_DIR/deployment/secbench-tools.Dockerfile"
+PAYLOAD_LOCK="$ROOT_DIR/deployment/secbench-tools-payload.lock"
+
+if [ ! -f "$PAYLOAD_LOCK" ]; then
+  printf 'Missing shared-tools lock: %s\n' "$PAYLOAD_LOCK" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+. "$PAYLOAD_LOCK"
+SHARED_TOOLS_IMAGE="${ARISE_SECBENCH_TOOLS_PAYLOAD_IMAGE:-$SHARED_TOOLS_IMAGE}"
 
 usage() {
   cat <<'EOF'
@@ -15,11 +24,13 @@ Each input may be:
   - a <project>.<cve> shorthand               (e.g. openjpeg.cve-2016-7445) — expanded to
                                               hwiwonlee/secb.eval.x86_64.<project>.<cve>:patch
 
-After each build, the script smokes the image:
+Every local build automatically pulls the locked shared tools payload. After
+assembly, the script validates the image:
+  - node --version
   - claude --version
   - /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP"
   - valgrind --version
-A failed smoke aborts so a broken image never sits in the local cache.
+A failed validation aborts so a broken image never runs an experiment.
 
 Examples:
   deployment/build-secbench-tools.sh openjpeg.cve-2016-7445
@@ -53,15 +64,40 @@ PY
   printf '%s\n' "$input"
 }
 
-smoke_image() {
+validate_image_tools() {
   local image="$1"
-  printf 'Smoking %s ...\n' "$image"
-  docker run --rm --entrypoint /bin/bash "$image" -lc '
+  printf 'Validating shared tools in %s ...\n' "$image"
+  docker run --rm --platform linux/amd64 --entrypoint /bin/bash "$image" -lc '
     set -e
-    claude --version
+    test "$(node --version)" = "v20.20.2"
+    test "$(claude --version | awk "{print \$1}")" = "2.1.173"
+    test "$(/opt/arise-mcp/venv/bin/python -c \
+      "import platform; print(platform.python_version())")" = "3.12.5"
+    test "$(/opt/arise-mcp/venv/bin/python -c \
+      "from importlib.metadata import version; print(version(\"mcp\"))")" = "1.27.2"
     /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP; print(\"MCP OK\")"
+    /opt/arise-mcp/venv/bin/python -c \
+      "from cryptography.hazmat.bindings._rust import openssl; print(\"native wheels OK\")"
     valgrind --version | head -1
   '
+}
+
+ensure_shared_tools() {
+  local architecture
+  architecture="$(
+    docker image inspect --format '{{.Architecture}}' "$SHARED_TOOLS_IMAGE" 2>/dev/null
+  )" || architecture=""
+  if [ "$architecture" != "amd64" ]; then
+    printf 'Pulling one shared tools payload: %s\n' "$SHARED_TOOLS_IMAGE"
+    docker pull --platform linux/amd64 "$SHARED_TOOLS_IMAGE"
+    architecture="$(
+      docker image inspect --format '{{.Architecture}}' "$SHARED_TOOLS_IMAGE"
+    )"
+  fi
+  if [ "$architecture" != "amd64" ]; then
+    printf 'Shared tools payload is not linux/amd64: %s\n' "$SHARED_TOOLS_IMAGE" >&2
+    return 1
+  fi
 }
 
 resolve_target_image() {
@@ -74,26 +110,46 @@ print(resolve_secbench_image(sys.argv[1], security_tools_enabled=True))
 PY
 }
 
+local_target_ready() {
+  local image="$1"
+  local metadata
+  metadata="$(
+    docker image inspect \
+      --format '{{.Architecture}}|{{.Descriptor.MediaType}}|{{index .Config.Labels "io.arise.secbench.tools"}}' \
+      "$image" 2>/dev/null
+  )" || return 1
+  [[ "$metadata" == amd64\|*\|"$SHARED_TOOLS_GENERATION" ]] || return 1
+  [[ "$metadata" != *image.index* && "$metadata" != *manifest.list* ]]
+}
+
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
-SKIP_SMOKE="${SKIP_SMOKE:-0}"
+SKIP_IMAGE_VALIDATION="${SKIP_IMAGE_VALIDATION:-${SKIP_SMOKE:-0}}"
+shared_tools_ready=0
 
 for input in "$@"; do
   base_image="$(resolve_base_image "$input")"
   target_image="$(resolve_target_image "$base_image")"
 
-  if [ "$FORCE_REBUILD" = "0" ] && docker image inspect "$target_image" >/dev/null 2>&1; then
+  if [ "$FORCE_REBUILD" = "0" ] && local_target_ready "$target_image"; then
     printf 'Skipping existing image %s (set FORCE_REBUILD=1 to override)\n' "$target_image"
   else
+    if [ "$shared_tools_ready" -eq 0 ]; then
+      ensure_shared_tools
+      shared_tools_ready=1
+    fi
     printf 'Building %s from %s\n' "$target_image" "$base_image"
     docker build \
       --platform linux/amd64 \
+      --provenance=false \
       -f "$DOCKERFILE" \
       --build-arg "BASE_IMAGE=$base_image" \
+      --build-arg "SHARED_TOOLS_IMAGE=$SHARED_TOOLS_IMAGE" \
+      --build-arg "SHARED_TOOLS_GENERATION=$SHARED_TOOLS_GENERATION" \
       -t "$target_image" \
       "$ROOT_DIR"
   fi
 
-  if [ "$SKIP_SMOKE" = "0" ]; then
-    smoke_image "$target_image"
+  if [ "$SKIP_IMAGE_VALIDATION" = "0" ]; then
+    validate_image_tools "$target_image"
   fi
 done

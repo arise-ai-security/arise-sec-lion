@@ -9,9 +9,13 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 import pytest
+
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -131,6 +135,39 @@ def test_run_defaults_bound_disk_and_enable_concurrency() -> None:
     assert args.keep_images is False
 
 
+def test_wave_eviction_keeps_the_shared_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: one completed wave and a recording Docker subprocess.
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_batch.subprocess, "run", fake_run)
+
+    # When: N1 reclaims the wave's image storage.
+    run_batch._evict_wave(
+        "/usr/bin/docker",
+        ["task-a"],
+        {"task-a": "hwiwonlee/secb.eval.x86_64.task-a:patch"},
+    )
+
+    # Then: only the final CVE image, its upstream base, and build cache are reclaimed.
+    assert calls == [
+        [
+            "/usr/bin/docker",
+            "image",
+            "rm",
+            "secb-tools:task-a-patch",
+            "hwiwonlee/secb.eval.x86_64.task-a:patch",
+        ],
+        ["/usr/bin/docker", "builder", "prune", "--force"],
+    ]
+    assert all("payload-focal-amd64" not in argument for call in calls for argument in call)
+
+
 def test_explicit_instances_limit_the_batch_scope() -> None:
     # Given: the operator requests the shared two-instance validation pair.
     tasks = (
@@ -138,9 +175,7 @@ def test_explicit_instances_limit_the_batch_scope() -> None:
         "openexr.cve-2020-16589",
         "faad2.cve-2018-20196",
     )
-    instances = run_batch._instances(
-        "openexr.cve-2020-16589,faad2.cve-2018-20196"
-    )
+    instances = run_batch._instances("openexr.cve-2020-16589,faad2.cve-2018-20196")
 
     # When: the batch scope is selected.
     selected = run_batch._selected_tasks(
@@ -268,8 +303,7 @@ def test_prepare_checks_full_toolchain_and_database_contract() -> None:
     # Given: the prepare command's prerequisite and event-store contracts.
     required_tools = set(prepare.REQUIRED_PROGRAMS)
     valid_status = (
-        "12|t|t|event_id,aggregate_id,sequence_number,event_type,payload,"
-        "occurred_at,metadata|t"
+        "12|t|t|event_id,aggregate_id,sequence_number,event_type,payload,occurred_at,metadata|t"
     )
 
     # When/Then: all run/export tools are checked and a valid schema reports its event count.
@@ -298,9 +332,8 @@ def test_prepare_event_coverage_counts_runs_not_event_rows(
     ]
     captured: list[list[str]] = []
 
-    def checked(
-        argv: list[str], *, label: str
-    ) -> subprocess.CompletedProcess[str]:
+    def checked(argv: list[str], *, label: str) -> subprocess.CompletedProcess[str]:
+        del label
         captured.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="1\n", stderr="")
 
@@ -402,13 +435,18 @@ def test_setup_keeps_openai_key_in_ignored_study_environment(
     assert "COMPOSE_ONLY=1" in compose_text
     assert "OPENAI_API_KEY" not in compose_text
     ignored = subprocess.run(
-        ["git", "check-ignore", "--quiet", "experiments/n1-secbench-full/.env"],
+        ["git", "check-ignore", "--quiet", "experiments/n1-secbench-full/.env"],  # noqa: S607
         cwd=REPO_ROOT,
         check=False,
     )
     assert ignored.returncode == 0
     example_ignored = subprocess.run(
-        ["git", "check-ignore", "--quiet", "experiments/n1-secbench-full/.env.example"],
+        [  # noqa: S607
+            "git",
+            "check-ignore",
+            "--quiet",
+            "experiments/n1-secbench-full/.env.example",
+        ],
         cwd=REPO_ROOT,
         check=False,
     )
@@ -491,41 +529,78 @@ def test_run_and_export_wrappers_have_separate_responsibilities() -> None:
     assert "docker" not in exporter.lower()
 
 
+def test_secbench_images_link_a_cve_independent_payload() -> None:
+    # Given: the payload, thin consumer, lock, and local fallback build definitions.
+    payload = (REPO_ROOT / "deployment/secbench-tools-payload.Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    consumer = (REPO_ROOT / "deployment/secbench-tools.Dockerfile").read_text(encoding="utf-8")
+    builder = (REPO_ROOT / "deployment/build-secbench-tools.sh").read_text(encoding="utf-8")
+    payload_lock = (REPO_ROOT / "deployment/secbench-tools-payload.lock").read_text(
+        encoding="utf-8"
+    )
+
+    # When/Then: the published artifact is scratch-based and contains only /opt tools.
+    assert "FROM scratch" in payload
+    assert "/opt/arise-node" in payload
+    assert "/opt/arise-mcp" in payload
+    assert "/src" not in payload
+    assert "/testcase" not in payload
+
+    # And: every local CVE build links that payload without repeating package installs.
+    assert "FROM ${SHARED_TOOLS_IMAGE} AS shared_tools" in consumer
+    assert consumer.count("COPY --link --from=shared_tools") == 2
+    assert "FROM ${BASE_IMAGE}" in consumer
+    for repeated_install in ("apt-get", "npm install", "pip install"):
+        assert repeated_install not in consumer
+    assert '--build-arg "SHARED_TOOLS_IMAGE=$SHARED_TOOLS_IMAGE"' in builder
+    assert 'docker pull --platform linux/amd64 "$SHARED_TOOLS_IMAGE"' in builder
+    assert "SHARED_TOOLS_TAG=cheshire0814/secb-tools:payload-focal-amd64-v1" in payload_lock
+
+    # And: the unsafe reference-CVE manifest graft implementation is gone.
+    assert not (REPO_ROOT / "plugins/security/toolchain_graft.py").exists()
+    assert not (REPO_ROOT / "deployment/publish-secbench-tools.sh").exists()
+
+
 def test_bulk_image_provisioning_prefers_registry_cache(tmp_path: Path) -> None:
     # Given: no local image and a registry cache hit.
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_log = tmp_path / "docker.log"
+    tagged_image = tmp_path / "tagged.image"
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
-case "$1:$2" in
-  image:inspect) exit 1 ;;
-  image:rm) exit 0 ;;
-  pull:*|tag:*) exit 0 ;;
-  *) exit 1 ;;
-esac
+if [ "$1:$2:$3" = "image:inspect:--format" ]; then
+  if [ -f "$TAGGED_IMAGE" ]; then
+    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v1\\n'
+    exit 0
+  fi
+  exit 1
+fi
+if [ "$1:$2" = "image:rm" ]; then exit 0; fi
+if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "tag" ]; then touch "$TAGGED_IMAGE"; exit 0; fi
+exit 1
 """,
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
-    fixture = (
-        REPO_ROOT
-        / "plugins/security/tests/fixtures/gpac.cve-2024-0322.json"
-    )
+    fixture = REPO_ROOT / "plugins/security/tests/fixtures/gpac.cve-2024-0322.json"
     env = os.environ.copy()
     env.update(
         {
             "DOCKER_LOG": str(docker_log),
             "PATH": f"{fake_bin}:{env['PATH']}",
+            "TAGGED_IMAGE": str(tagged_image),
             "TOOLS_IMAGE_REGISTRY": "cache.example",
         }
     )
 
     # When: the hidden bulk provisioner handles that fixture.
-    completed = subprocess.run(
-        ["bash", "deployment/build-all-images.sh", str(fixture)],
+    completed = subprocess.run(  # noqa: S603
+        ["/bin/bash", "deployment/build-all-images.sh", str(fixture)],
         cwd=REPO_ROOT,
         env=env,
         check=False,
@@ -537,16 +612,79 @@ esac
     commands = docker_log.read_text(encoding="utf-8")
     assert completed.returncode == 0, completed.stderr
     assert (
-        "pull --platform linux/amd64 "
-        "cache.example/secb-tools:gpac.cve-2024-0322-patch"
+        "pull --platform linux/amd64 cache.example/secb-tools:gpac.cve-2024-0322-patch"
     ) in commands
     assert (
-        "tag cache.example/secb-tools:gpac.cve-2024-0322-patch "
-        "secb-tools:gpac.cve-2024-0322-patch"
+        "tag cache.example/secb-tools:gpac.cve-2024-0322-patch secb-tools:gpac.cve-2024-0322-patch"
     ) in commands
     assert not any(line.startswith(("build ", "buildx ")) for line in commands.splitlines())
     assert "Cached:  1" in completed.stderr
     assert "Built:   0" in completed.stderr
+
+
+def test_local_image_fallback_pulls_and_consumes_shared_payload(tmp_path: Path) -> None:
+    # Given: a local cache miss and a fake Docker daemon that records the fallback build.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    payload_ready = tmp_path / "payload.ready"
+    fake_docker = fake_bin / "docker"
+    fake_uv = fake_bin / "uv"
+    fake_docker.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+if [ "$1:$2:$3" = "image:inspect:--format" ]; then
+  if [ -f "$PAYLOAD_READY" ]; then printf 'amd64\\n'; exit 0; fi
+  exit 1
+fi
+if [ "$1" = "pull" ]; then touch "$PAYLOAD_READY"; exit 0; fi
+if [ "$1:$2" = "image:inspect" ]; then exit 1; fi
+case "$1" in
+  build|run) exit 0 ;;
+esac
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fake_uv.write_text(
+        """#!/bin/sh
+if [ "$1:$2:$3" = "run:python:-" ]; then
+  printf 'secb-tools:openjpeg.cve-2016-7445-patch\\n'
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    payload_image = "cache.example/secb-tools:payload-focal-amd64-v1"
+    env.update(
+        {
+            "ARISE_SECBENCH_TOOLS_PAYLOAD_IMAGE": payload_image,
+            "DOCKER_LOG": str(docker_log),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "PAYLOAD_READY": str(payload_ready),
+        }
+    )
+
+    # When: one missing CVE image is built through the hidden single-image builder.
+    completed = subprocess.run(
+        ["/bin/bash", "deployment/build-secbench-tools.sh", "openjpeg.cve-2016-7445"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then: the payload is pulled once and passed to the thin Dockerfile build.
+    commands = docker_log.read_text(encoding="utf-8")
+    assert completed.returncode == 0, completed.stderr
+    assert f"pull --platform linux/amd64 {payload_image}" in commands
+    assert f"--build-arg SHARED_TOOLS_IMAGE={payload_image}" in commands
+    assert "run --rm --platform linux/amd64" in commands
 
 
 def test_bulk_image_provisioning_accepts_verified_mislabeled_cache(
@@ -556,6 +694,7 @@ def test_bulk_image_provisioning_accepts_verified_mislabeled_cache(
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_log = tmp_path / "docker.log"
+    tagged_image = tmp_path / "tagged.image"
     digest = "sha256:" + "a" * 64
     manifest = json.dumps(
         {
@@ -569,15 +708,20 @@ def test_bulk_image_provisioning_accepts_verified_mislabeled_cache(
         separators=(",", ":"),
     )
     fake_docker = fake_bin / "docker"
+    fake_uv = fake_bin / "uv"
     fake_docker.write_text(
         f"""#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
-if [ "$1:$2:$3" = "image:inspect:secb-tools:gpac.cve-2024-0322-patch" ]; then
-  exit 1
-fi
 if [ "$1:$2:$3" = "image:inspect:--format" ]; then
-  printf 'amd64\\n'
-  exit 0
+  if [ "$5" = "cache.example/secb-tools@{digest}" ]; then
+    printf 'amd64\\n'
+    exit 0
+  fi
+  if [ -f "$TAGGED_IMAGE" ]; then
+    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v1\\n'
+    exit 0
+  fi
+  exit 1
 fi
 if [ "$1:$2" = "pull:--platform" ]; then
   exit 1
@@ -586,9 +730,8 @@ if [ "$1:$2" = "manifest:inspect" ]; then
   printf '%s\\n' '{manifest}'
   exit 0
 fi
-case "$1" in
-  pull|tag) exit 0 ;;
-esac
+if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "tag" ]; then touch "$TAGGED_IMAGE"; exit 0; fi
 if [ "$1:$2" = "image:rm" ]; then
   exit 0
 fi
@@ -597,19 +740,33 @@ exit 1
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
+    fake_uv.write_text(
+        """#!/bin/sh
+if [ "$1:$2:$3" = "run:python:-c" ]; then
+  cat >/dev/null
+  printf '%s\\n' "$FAKE_DIGEST"
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
     fixture = REPO_ROOT / "plugins/security/tests/fixtures/gpac.cve-2024-0322.json"
     env = os.environ.copy()
     env.update(
         {
             "DOCKER_LOG": str(docker_log),
+            "FAKE_DIGEST": digest,
             "PATH": f"{fake_bin}:{env['PATH']}",
+            "TAGGED_IMAGE": str(tagged_image),
             "TOOLS_IMAGE_REGISTRY": "cache.example",
         }
     )
 
     # When: the hidden provisioner handles the malformed registry index.
-    completed = subprocess.run(
-        ["bash", "deployment/build-all-images.sh", str(fixture)],
+    completed = subprocess.run(  # noqa: S603
+        ["/bin/bash", "deployment/build-all-images.sh", str(fixture)],
         cwd=REPO_ROOT,
         env=env,
         check=False,

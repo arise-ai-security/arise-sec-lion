@@ -279,9 +279,10 @@ deployment/build-secbench-tools.sh deployment/njs-cve-2022-28049.json
 
 This script:
 1. Reads the CVE JSON to extract the base Docker image name via `CVEInstance.from_json_file()`.
-2. Builds a new image layered on top with security analysis tools. Valgrind is always installed; KLEE installation is attempted but falls back gracefully if unavailable in the base image's package repos.
-3. Uses `deployment/secbench-tools.Dockerfile` as the build template.
-4. Skips images that already exist locally.
+2. Pulls the immutable shared `/opt` payload from `deployment/secbench-tools-payload.lock`.
+3. Links the shared Node, Claude Code, and MCP layers onto the upstream image with `COPY --link`.
+4. Inherits Valgrind and the native debugging toolchain from the common SEC-bench eval base; KLEE remains a lazy optional install.
+5. Validates the assembled image and skips images that already exist locally.
 
 You can also pass a raw base image name:
 
@@ -293,22 +294,23 @@ Multiple inputs can be passed in a single invocation.
 
 ### Publishing a large SEC-bench roster
 
-Do not run the tool installation Dockerfile once per CVE. Build one immutable
-Ubuntu 20.04/amd64 toolchain and graft its filesystem layers onto each upstream
-base manifest in Docker Hub:
+Do not reinstall Node, Claude Code, or the MCP runtime once per CVE. Build one
+scratch-based Ubuntu 20.04/amd64-compatible `/opt` payload and publish it:
 
 ```bash
-deployment/build-secbench-toolchain.sh cheshire0814
-deployment/publish-secbench-tools.sh cheshire0814 \
-  --tool-image cheshire0814/secb-tools:toolchain-focal-amd64-v1 \
-  --parallel 8
+deployment/publish-secbench-tools-payload.sh --push
 ```
 
-The publisher preserves every target base's environment, command, labels, and
-working directory. It performs registry-to-registry blob mounts plus small
-config/manifest uploads; it does not build or pull the 300 CVE images locally.
-Existing destination tags are skipped unless `--force` is supplied. Use
-`--dataset` or `--lock` for rosters other than the N1 300 dataset.
+The publisher validates one representative N1 consumer and prints the registry
+digest. Record that digest as `SHARED_TOOLS_IMAGE` in
+`deployment/secbench-tools-payload.lock` before handoff.
+
+The experiment still assembles every missing CVE image locally from its own
+`hwiwonlee` base. Those thin builds consume the same payload layers, then the N1
+runner deletes each CVE image and base after its wave while retaining the tagged
+payload. Existing full `cheshire0814/secb-tools:<id>-patch` images carrying the
+same payload-generation label remain a faster cache hit and are pulled before
+local fallback; stale generations are discarded automatically.
 
 ### CVE JSON files
 
