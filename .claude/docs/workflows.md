@@ -279,9 +279,9 @@ deployment/build-secbench-tools.sh deployment/njs-cve-2022-28049.json
 
 This script:
 1. Reads the CVE JSON to extract the base Docker image name via `CVEInstance.from_json_file()`.
-2. Pulls the immutable shared `/opt` payload from `deployment/secbench-tools-payload.lock`.
-3. Links the shared Node, Claude Code, and MCP layers onto the upstream image with `COPY --link`.
-4. Inherits Valgrind and the native debugging toolchain from the common SEC-bench eval base; KLEE remains a lazy optional install.
+2. Pulls the immutable shared tool payload from `deployment/secbench-tools-payload.lock`.
+3. Links the shared Node, Claude Code, Python 3.12, MCP dependency, and native analysis-tool layer onto the upstream image with `COPY --link`, then adds the small repository-owned MCP server locally.
+4. Leaves KLEE as a lazy optional install.
 5. Validates the assembled image and skips images that already exist locally.
 
 You can also pass a raw base image name:
@@ -294,8 +294,8 @@ Multiple inputs can be passed in a single invocation.
 
 ### Publishing a large SEC-bench roster
 
-Do not reinstall Node, Claude Code, or the MCP runtime once per CVE. Build one
-scratch-based Ubuntu 20.04/amd64-compatible `/opt` payload and publish it:
+Do not reinstall Node, Claude Code, Python, MCP dependencies, or native analysis tools once per CVE. Build one
+scratch-based Ubuntu 20.04/amd64-compatible tool payload and publish it:
 
 ```bash
 deployment/publish-secbench-tools-payload.sh --push

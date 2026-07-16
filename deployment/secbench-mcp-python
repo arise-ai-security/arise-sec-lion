@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+PYTHONHOME=/opt/arise-python
 PYTHONPATH="/opt/arise-mcp/site-packages${PYTHONPATH:+:${PYTHONPATH}}"
-export PYTHONPATH
-exec /usr/local/bin/python3.12 "$@"
+export PYTHONHOME PYTHONPATH
+exec /opt/arise-python/bin/python3.12 "$@"

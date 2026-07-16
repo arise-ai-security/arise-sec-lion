@@ -536,26 +536,38 @@ def test_secbench_images_link_a_cve_independent_payload() -> None:
     )
     consumer = (REPO_ROOT / "deployment/secbench-tools.Dockerfile").read_text(encoding="utf-8")
     builder = (REPO_ROOT / "deployment/build-secbench-tools.sh").read_text(encoding="utf-8")
+    mcp_python = (REPO_ROOT / "deployment/secbench-mcp-python").read_text(encoding="utf-8")
     payload_lock = (REPO_ROOT / "deployment/secbench-tools-payload.lock").read_text(
         encoding="utf-8"
     )
 
-    # When/Then: the published artifact is scratch-based and contains only /opt tools.
+    # When/Then: the published artifact is scratch-based and excludes repository source.
     assert "FROM scratch" in payload
     assert "/opt/arise-node" in payload
     assert "/opt/arise-mcp" in payload
+    assert "/opt/arise-python" in payload
     assert "/src" not in payload
     assert "/testcase" not in payload
+    assert "security_tools_server.py" not in payload
+    assert "secbench-mcp-python" not in payload
+
+    for native_tool in ("valgrind", "gdb", "cppcheck", "strace", "ltrace", "cflow", "jq"):
+        assert native_tool in payload
 
     # And: every local CVE build links that payload without repeating package installs.
     assert "FROM ${SHARED_TOOLS_IMAGE} AS shared_tools" in consumer
-    assert consumer.count("COPY --link --from=shared_tools") == 2
+    assert consumer.count("COPY --link --from=shared_tools") == 1
+    assert "FROM scratch AS local_mcp_server" in consumer
+    assert "COPY --link --from=local_mcp_server" in consumer
+    assert "plugins/security/mcp/security_tools_server.py" in consumer
+    assert "exec /opt/arise-python/bin/python3.12" in mcp_python
+    assert "exec /usr/local/bin/python3.12" not in mcp_python
     assert "FROM ${BASE_IMAGE}" in consumer
     for repeated_install in ("apt-get", "npm install", "pip install"):
         assert repeated_install not in consumer
     assert '--build-arg "SHARED_TOOLS_IMAGE=$SHARED_TOOLS_IMAGE"' in builder
     assert 'docker pull --platform linux/amd64 "$SHARED_TOOLS_IMAGE"' in builder
-    assert "SHARED_TOOLS_TAG=cheshire0814/secb-tools:payload-focal-amd64-v1" in payload_lock
+    assert "SHARED_TOOLS_TAG=cheshire0814/secb-tools:payload-focal-amd64-v2" in payload_lock
 
     # And: the unsafe reference-CVE manifest graft implementation is gone.
     assert not (REPO_ROOT / "plugins/security/toolchain_graft.py").exists()
@@ -574,7 +586,7 @@ def test_bulk_image_provisioning_prefers_registry_cache(tmp_path: Path) -> None:
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 if [ "$1:$2:$3" = "image:inspect:--format" ]; then
   if [ -f "$TAGGED_IMAGE" ]; then
-    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v1\\n'
+    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v2\\n'
     exit 0
   fi
   exit 1
@@ -659,7 +671,7 @@ exit 1
     )
     fake_uv.chmod(0o755)
     env = os.environ.copy()
-    payload_image = "cache.example/secb-tools:payload-focal-amd64-v1"
+    payload_image = "cache.example/secb-tools:payload-focal-amd64-v2"
     env.update(
         {
             "ARISE_SECBENCH_TOOLS_PAYLOAD_IMAGE": payload_image,
@@ -718,7 +730,7 @@ if [ "$1:$2:$3" = "image:inspect:--format" ]; then
     exit 0
   fi
   if [ -f "$TAGGED_IMAGE" ]; then
-    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v1\\n'
+    printf 'amd64|application/vnd.docker.distribution.manifest.v2+json|payload-focal-amd64-v2\\n'
     exit 0
   fi
   exit 1

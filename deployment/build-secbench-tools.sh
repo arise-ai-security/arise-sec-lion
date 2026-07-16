@@ -29,7 +29,7 @@ assembly, the script validates the image:
   - node --version
   - claude --version
   - /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP"
-  - valgrind --version
+  - valgrind, gdb, cppcheck, strace, ltrace, cflow, and jq
 A failed validation aborts so a broken image never runs an experiment.
 
 Examples:
@@ -78,7 +78,16 @@ validate_image_tools() {
     /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP; print(\"MCP OK\")"
     /opt/arise-mcp/venv/bin/python -c \
       "from cryptography.hazmat.bindings._rust import openssl; print(\"native wheels OK\")"
-    valgrind --version | head -1
+    for command in valgrind gdb cppcheck strace ltrace cflow jq; do
+      command -v "$command" >/dev/null
+    done
+    valgrind --version >/dev/null
+    gdb --version >/dev/null
+    cppcheck --version >/dev/null
+    strace --version >/dev/null
+    ltrace --version >/dev/null
+    cflow --version >/dev/null
+    jq --version >/dev/null
   '
 }
 

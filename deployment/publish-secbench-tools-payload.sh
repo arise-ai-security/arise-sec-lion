@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Maintainer-only: build, validate, and publish the one shared N1 /opt payload.
+# Maintainer-only: build, validate, and publish the one shared N1 tool payload.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,7 +49,16 @@ docker run --rm --platform linux/amd64 --entrypoint /bin/bash "$VALIDATION_IMAGE
   /opt/arise-mcp/venv/bin/python -c "from mcp.server.fastmcp import FastMCP"
   /opt/arise-mcp/venv/bin/python -c \
     "from cryptography.hazmat.bindings._rust import openssl"
-  valgrind --version
+  for command in valgrind gdb cppcheck strace ltrace cflow jq; do
+    command -v "$command" >/dev/null
+  done
+  valgrind --version >/dev/null
+  gdb --version >/dev/null
+  cppcheck --version >/dev/null
+  strace --version >/dev/null
+  ltrace --version >/dev/null
+  cflow --version >/dev/null
+  jq --version >/dev/null
 '
 test "$(docker image inspect --format \
   '{{index .Config.Labels "io.arise.secbench.tools"}}' "$VALIDATION_IMAGE")" \

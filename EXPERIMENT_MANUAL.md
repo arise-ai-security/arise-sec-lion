@@ -40,16 +40,17 @@ Dashboard at http://localhost:8000.
 
 ## 3. Build only the images this study needs
 
-For the 300-instance N1 roster, publish one CVE-independent `/opt` payload once:
+For the 300-instance N1 roster, publish one CVE-independent tool payload once:
 
 ```bash
 deployment/publish-secbench-tools-payload.sh --push
 ```
 
-This maintainer-only command packages Node, Claude Code, and the security MCP
-runtime under `/opt`, validates them on the pinned N1 ABI, and publishes one
-image. Pin the printed digest in `deployment/secbench-tools-payload.lock` before
-handoff.
+This maintainer-only command packages Node, Claude Code, a Focal-compatible
+Python 3.12 runtime, the third-party MCP dependencies, and the native analysis
+tools, validates them on the pinned N1 ABI, and publishes one image.
+Repository-owned MCP source is added only during each local thin assembly. Pin
+the printed digest in `deployment/secbench-tools-payload.lock` before handoff.
 
 The N1 runner still assembles one image per CVE locally. On a final-image cache
 miss it pulls that CVE's `hwiwonlee` base and links in the shared payload, without
