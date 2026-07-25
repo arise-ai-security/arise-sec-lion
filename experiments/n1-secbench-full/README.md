@@ -39,6 +39,23 @@ Smoke:
 python3 experiments/n1-secbench-full/run.py --smoke --parallel 2 --batch-size 2
 ```
 
+Force a fresh diagnostic attempt for an instance that already has a canonical
+run:
+
+```bash
+python3 experiments/n1-secbench-full/run.py \
+  --force \
+  --parallel 2 \
+  --batch-size 2 \
+  --instances gpac.cve-2023-5586
+```
+
+`--force` requires `--instances` (or `--smoke`) so it cannot accidentally rerun
+the full dataset. It provisions and executes a real additional attempt, including
+normal model usage and cost. The command verifies that exactly one new
+event-backed run was created per task and reports that attempt; ordinary
+resume/export commands continue to use the original first launch as canonical.
+
 ## 4. Export
 
 After the run finishes:

@@ -23,9 +23,11 @@ from _n1_experiment import (
     ExperimentStateError,
     RunRecord,
     Shard,
+    StudyDefinition,
     chunked,
     experiment_lock,
     load_definition,
+    load_run_history,
     load_run_records,
     parse_shard,
     pending_tasks,
@@ -176,6 +178,15 @@ class FailureDiagnosticEvent:
     payload: dict[str, object]
 
 
+@dataclass
+class _RunProgress:
+    """Track fresh event-backed records created by one forced invocation."""
+
+    forced: bool
+    known_run_ids: set[str]
+    forced_records_by_task: dict[str, RunRecord]
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -230,6 +241,11 @@ def _parser() -> argparse.ArgumentParser:
         "--keep-images",
         action="store_true",
         help="retain SEC-bench images instead of freeing disk after each wave",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="rerun explicitly selected instances even when canonical records exist",
     )
     return parser
 
@@ -319,6 +335,31 @@ def _run_wave(tasks: list[str], parallel: int) -> int:
             "1",
         ]
     )
+
+
+def _new_forced_wave_records(
+    tasks: list[str],
+    history: list[RunRecord],
+    known_run_ids: set[str],
+) -> dict[str, RunRecord]:
+    records_by_task: dict[str, RunRecord] = {}
+    for task in tasks:
+        new_records = [
+            record
+            for record in history
+            if record.task == task and record.run_id not in known_run_ids
+        ]
+        if not new_records:
+            raise ExperimentError(
+                f"forced runner did not create a new event-backed manifest for: {task}"
+            )
+        if len(new_records) != 1:
+            run_ids = ", ".join(record.run_id for record in new_records)
+            raise ExperimentError(
+                f"forced runner created multiple new manifests for {task}: {run_ids}"
+            )
+        records_by_task[task] = new_records[0]
+    return records_by_task
 
 
 def _parse_failure_diagnostic_events(stdout: str) -> list[FailureDiagnosticEvent]:
@@ -543,6 +584,75 @@ def _evict_wave(
         logger.warning("build-cache cleanup failed: %s", result.stderr.strip())
 
 
+def _initialize_progress(
+    args: argparse.Namespace,
+    definition: StudyDefinition,
+    records: list[RunRecord],
+    selected_tasks: list[str],
+) -> tuple[_RunProgress, list[str]]:
+    if args.force and args.instances is None:
+        raise ExperimentError("--force requires --instances or --smoke")
+    if not args.force:
+        return _RunProgress(False, set(), {}), pending_tasks(selected_tasks, records)
+    history = load_run_history(definition, event_backed_only=True)
+    return (
+        _RunProgress(
+            forced=True,
+            known_run_ids={record.run_id for record in history},
+            forced_records_by_task={},
+        ),
+        list(selected_tasks),
+    )
+
+
+def _record_wave_completion(
+    progress: _RunProgress,
+    definition: StudyDefinition,
+    wave: list[str],
+) -> None:
+    if progress.forced:
+        current_history = load_run_history(definition, event_backed_only=True)
+        progress.forced_records_by_task.update(
+            _new_forced_wave_records(
+                wave,
+                current_history,
+                progress.known_run_ids,
+            )
+        )
+        progress.known_run_ids.update(record.run_id for record in current_history)
+        return
+
+    current_records = load_run_records(definition, event_backed_only=True)
+    missing = pending_tasks(wave, current_records)
+    if missing:
+        raise ExperimentError("runner did not create manifests for: " + ", ".join(missing))
+
+
+def _completed_task_count(
+    progress: _RunProgress,
+    definition: StudyDefinition,
+    selected_tasks: list[str],
+) -> int:
+    if progress.forced:
+        return len(progress.forced_records_by_task)
+    current_records = load_run_records(definition, event_backed_only=True)
+    return len(selected_tasks) - len(pending_tasks(selected_tasks, current_records))
+
+
+def _final_attempt_records(
+    progress: _RunProgress,
+    definition: StudyDefinition,
+    initial_records: list[RunRecord],
+    *,
+    ran_tasks: bool,
+) -> list[RunRecord]:
+    if progress.forced:
+        return list(progress.forced_records_by_task.values())
+    if ran_tasks:
+        return load_run_records(definition, event_backed_only=True)
+    return initial_records
+
+
 def _execute(args: argparse.Namespace) -> None:
     definition = load_definition()
     records = load_run_records(definition, event_backed_only=True)
@@ -551,17 +661,23 @@ def _execute(args: argparse.Namespace) -> None:
         shard=args.shard,
         instances=args.instances,
     )
-    remaining = pending_tasks(selected_tasks, records)
+    progress, remaining = _initialize_progress(
+        args,
+        definition,
+        records,
+        selected_tasks,
+    )
     total_batches = ceil(len(remaining) / args.batch_size) if remaining else 0
     docker = _require_runtime() if remaining else ""
 
     logger.info(
-        "[run] shard=%s tasks=%d completed=%d pending=%d parallel=%d",
+        "[run] shard=%s tasks=%d completed=%d pending=%d parallel=%d%s",
         args.shard.label,
         len(selected_tasks),
         len(selected_tasks) - len(remaining),
         len(remaining),
         args.parallel,
+        " force=true" if progress.forced else "",
     )
 
     for batch_number, batch in enumerate(chunked(remaining, args.batch_size), start=1):
@@ -573,12 +689,7 @@ def _execute(args: argparse.Namespace) -> None:
                 _provision_wave(wave, definition.fixtures, len(wave))
                 logger.info("%s run %d task(s)", prefix, len(wave))
                 run_returncode = _run_wave(wave, len(wave))
-                current_records = load_run_records(definition, event_backed_only=True)
-                missing = pending_tasks(wave, current_records)
-                if missing:
-                    raise ExperimentError(
-                        "runner did not create manifests for: " + ", ".join(missing)
-                    )
+                _record_wave_completion(progress, definition, wave)
                 if run_returncode != 0:
                     logger.info("%s recorded one or more failed experimental outcomes", prefix)
             finally:
@@ -586,8 +697,7 @@ def _execute(args: argparse.Namespace) -> None:
                     logger.info("%s evict images and build cache", prefix)
                     _evict_wave(docker, wave, definition.base_images)
 
-        current_records = load_run_records(definition, event_backed_only=True)
-        completed = len(selected_tasks) - len(pending_tasks(selected_tasks, current_records))
+        completed = _completed_task_count(progress, definition, selected_tasks)
         logger.info(
             "[batch %d/%d] checkpoint: %d/%d shard tasks complete",
             batch_number,
@@ -596,7 +706,12 @@ def _execute(args: argparse.Namespace) -> None:
             len(selected_tasks),
         )
 
-    final_records = load_run_records(definition, event_backed_only=True) if remaining else records
+    final_records = _final_attempt_records(
+        progress,
+        definition,
+        records,
+        ran_tasks=bool(remaining),
+    )
     record_by_task = {
         record.task: record for record in final_records if record.task in selected_tasks
     }
@@ -618,6 +733,8 @@ def _execute(args: argparse.Namespace) -> None:
     )
     for record in failed_records:
         _log_failure_diagnostics(record)
+    if progress.forced:
+        logger.info("forced rerun complete: canonical first-launch records remain unchanged")
 
 
 def main(argv: list[str] | None = None) -> int:

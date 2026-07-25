@@ -215,6 +215,7 @@ def test_run_defaults_bound_disk_and_enable_concurrency() -> None:
     assert args.shard.label == "1/1"
     assert args.instances is None
     assert args.keep_images is False
+    assert args.force is False
 
 
 def test_wave_eviction_keeps_the_shared_payload(
@@ -310,6 +311,125 @@ def test_completed_explicit_scope_does_not_require_provider_runtime(
 
     # When/Then: resume completes without an OpenAI key, Docker, or a new launch.
     run_batch._execute(args)
+
+
+def test_force_requires_an_explicit_instance_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a force request without --instances or the wrapper's --smoke expansion.
+    definition = _definition(("task-a",))
+    monkeypatch.setattr(run_batch, "load_definition", lambda: definition)
+    monkeypatch.setattr(run_batch, "load_run_records", lambda *_args, **_kwargs: [])
+    args = run_batch._parser().parse_args(["--force"])
+
+    # When + Then: the runner rejects an accidental full-dataset rerun.
+    with pytest.raises(n1.ExperimentError, match="requires --instances"):
+        run_batch._execute(args)
+
+
+def test_force_runs_completed_instance_and_reports_only_the_new_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: a canonical failed run already exists for the requested task.
+    old_run_dir = tmp_path / "00000000-0000-0000-0000-000000000201"
+    new_run_dir = tmp_path / "00000000-0000-0000-0000-000000000202"
+    old_run_dir.mkdir()
+    new_run_dir.mkdir()
+    old_record = _record(
+        "task-a",
+        "00000000-0000-0000-0000-000000000201",
+        old_run_dir,
+        status="failed",
+    )
+    new_record = _record(
+        "task-a",
+        "00000000-0000-0000-0000-000000000202",
+        new_run_dir,
+        status="success",
+    )
+    definition = _definition(("task-a",))
+    history_calls = 0
+
+    def fake_history(*_args: object, **_kwargs: object) -> list[n1.RunRecord]:
+        nonlocal history_calls
+        history_calls += 1
+        return [old_record] if history_calls == 1 else [old_record, new_record]
+
+    launched: list[tuple[list[str], int]] = []
+    monkeypatch.setattr(run_batch, "load_definition", lambda: definition)
+    monkeypatch.setattr(
+        run_batch,
+        "load_run_records",
+        lambda *_args, **_kwargs: [old_record],
+    )
+    monkeypatch.setattr(run_batch, "load_run_history", fake_history)
+    monkeypatch.setattr(run_batch, "_require_runtime", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(run_batch, "_provision_wave", lambda *_args: None)
+    monkeypatch.setattr(
+        run_batch,
+        "_run_wave",
+        lambda tasks, parallel: launched.append((tasks, parallel)) or 0,
+    )
+    monkeypatch.setattr(run_batch, "_evict_wave", lambda *_args: None)
+    monkeypatch.setattr(
+        run_batch,
+        "_log_failure_diagnostics",
+        lambda record: pytest.fail(f"new successful run was misclassified: {record.run_id}"),
+    )
+    args = run_batch._parser().parse_args(["--force", "--instances", "task-a", "--parallel", "1"])
+
+    # When: force executes the already-completed instance.
+    with caplog.at_level(logging.INFO):
+        run_batch._execute(args)
+
+    # Then: the fresh success is reported without replacing the failed canonical run.
+    output = caplog.text
+    assert "[run] shard=1/1 tasks=1 completed=0 pending=1 parallel=1 force=true" in output
+    assert "done: shard=1/1 completed=1 succeeded=1 failed=0" in output
+    assert "canonical first-launch records remain unchanged" in output
+    assert launched == [(["task-a"], 1)]
+    assert history_calls == 2
+
+
+def test_force_rejects_a_wave_without_exactly_one_new_event_backed_run(
+    tmp_path: Path,
+) -> None:
+    # Given: the history contains only the run that existed before force.
+    run_dir = tmp_path / "00000000-0000-0000-0000-000000000203"
+    run_dir.mkdir()
+    existing = _record(
+        "task-a",
+        "00000000-0000-0000-0000-000000000203",
+        run_dir,
+    )
+
+    # When + Then: no new run cannot masquerade as the forced attempt.
+    with pytest.raises(n1.ExperimentError, match="did not create a new"):
+        run_batch._new_forced_wave_records(
+            ["task-a"],
+            [existing],
+            {existing.run_id},
+        )
+
+    # And: multiple new runs are rejected as ambiguous.
+    new_a = _record(
+        "task-a",
+        "00000000-0000-0000-0000-000000000204",
+        tmp_path / "00000000-0000-0000-0000-000000000204",
+    )
+    new_b = _record(
+        "task-a",
+        "00000000-0000-0000-0000-000000000205",
+        tmp_path / "00000000-0000-0000-0000-000000000205",
+    )
+    with pytest.raises(n1.ExperimentError, match="created multiple new"):
+        run_batch._new_forced_wave_records(
+            ["task-a"],
+            [existing, new_a, new_b],
+            {existing.run_id},
+        )
 
 
 def test_completed_failed_scope_prints_persisted_root_cause(
@@ -503,10 +623,16 @@ def test_duplicate_task_manifests_select_earliest_launch(tmp_path: Path) -> None
         }
         (run_dir / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    # When: resume canonicalizes the task according to first-launch semantics.
+    # When: history and resume state are loaded.
+    history = n1.load_run_history(_definition(("task-a",)), repo_root=tmp_path)
     records = n1.load_run_records(_definition(("task-a",)), repo_root=tmp_path)
 
-    # Then: preparation remains idempotent without deleting either run directory.
+    # Then: force can observe both launches while resume preserves first-launch semantics.
+    assert [record.run_id for record in history] == list(run_ids)
+    assert [record.started_at for record in history] == [
+        "2026-07-15T00:00:00Z",
+        "2026-07-15T00:00:01Z",
+    ]
     assert [record.run_id for record in records] == [run_ids[0]]
     assert all((runs_root / run_id).is_dir() for run_id in run_ids)
 

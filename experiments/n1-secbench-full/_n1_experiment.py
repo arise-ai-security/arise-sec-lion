@@ -11,14 +11,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import yaml
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +38,6 @@ CELL_ID = "N1"
 EXPECTED_TASK_COUNT = 300
 POSTGRES_CONTAINER = "postgres-main"
 
-T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +70,7 @@ class RunRecord:
     exit_status: str
     replicate: int
     run_dir: Path
+    started_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,7 +103,7 @@ def _validate_n1_control_config(config: dict[str, Any]) -> None:
     orchestration = config.get("orchestration") or {}
     worker = config.get("worker") or {}
     output = config.get("output") or {}
-    openhands = ((worker.get("tool_params") or {}).get("openhands") or {})
+    openhands = (worker.get("tool_params") or {}).get("openhands") or {}
     _require(orchestration.get("mode") == "flat", "N1 orchestration.mode must be flat")
     _require(
         orchestration.get("procedural_dispatch") is False,
@@ -128,7 +131,10 @@ def _base_image(fixture: dict[str, Any], *, fixture_path: Path) -> str:
     return f"hwiwonlee/secb.eval.x86_64.{project}.{parts[1]}:patch"
 
 
-def load_definition(*, repo_root: Path = REPO_ROOT) -> StudyDefinition:
+def load_definition(  # noqa: PLR0915 - strict contract validation stays linear.
+    *,
+    repo_root: Path = REPO_ROOT,
+) -> StudyDefinition:
     """Load and strictly validate the committed 300-task N1 definition."""
     study_dir = repo_root / "experiments" / STUDY_ID
     manifest_path = study_dir / "manifest.yaml"
@@ -203,13 +209,13 @@ def load_definition(*, repo_root: Path = REPO_ROOT) -> StudyDefinition:
     )
 
 
-def load_run_records(
+def load_run_history(
     definition: StudyDefinition,
     *,
     repo_root: Path = REPO_ROOT,
     event_backed_only: bool = False,
 ) -> list[RunRecord]:
-    """Load N1 manifests and reject state that cannot be resumed unambiguously."""
+    """Load every valid N1 run in deterministic task/launch order."""
     event_backed_ids = _event_backed_run_ids() if event_backed_only else None
     rows = load_runs(
         study_id=STUDY_ID,
@@ -217,7 +223,7 @@ def load_run_records(
         pool_roots=[repo_root / "runs"],
     )
     known_tasks = set(definition.tasks)
-    selected_by_task: dict[str, tuple[tuple[str, str], RunRecord]] = {}
+    records: list[RunRecord] = []
     for row in rows:
         run_id = row.get("run_id")
         task = row.get("task")
@@ -242,6 +248,7 @@ def load_run_records(
             raise ExperimentStateError(f"N1 run {run_id} has replicate {replicate}; expected 0")
         if not isinstance(exit_status, str):
             raise ExperimentStateError(f"N1 run {run_id} has no exit_status")
+        started_at = row.get("started_at")
         run_dir = repo_root / "runs" / run_id
         if not run_dir.is_dir():
             raise ExperimentStateError(f"run directory is missing for {run_id}")
@@ -251,22 +258,44 @@ def load_run_records(
             exit_status=exit_status,
             replicate=replicate,
             run_dir=run_dir,
+            started_at=started_at if isinstance(started_at, str) else "",
         )
-        started_at = row.get("started_at")
-        selection_key = (started_at if isinstance(started_at, str) else "", run_id)
-        previous = selected_by_task.get(task)
-        if previous is None or selection_key < previous[0]:
-            selected_by_task[task] = (selection_key, record)
-        if previous is not None:
-            canonical = selected_by_task[task][1].run_id
+        records.append(record)
+    task_order = {task: index for index, task in enumerate(definition.tasks)}
+    return sorted(
+        records,
+        key=lambda record: (
+            task_order[record.task],
+            record.started_at,
+            record.run_id,
+        ),
+    )
+
+
+def load_run_records(
+    definition: StudyDefinition,
+    *,
+    repo_root: Path = REPO_ROOT,
+    event_backed_only: bool = False,
+) -> list[RunRecord]:
+    """Select the canonical first launch for each task from the N1 history."""
+    selected_by_task: dict[str, RunRecord] = {}
+    for record in load_run_history(
+        definition,
+        repo_root=repo_root,
+        event_backed_only=event_backed_only,
+    ):
+        canonical = selected_by_task.get(record.task)
+        if canonical is None:
+            selected_by_task[record.task] = record
+        else:
             logger.warning(
                 "task %s has multiple historical runs; using earliest run %s",
-                task,
-                canonical,
+                record.task,
+                canonical.run_id,
             )
     task_order = {task: index for index, task in enumerate(definition.tasks)}
-    records = [item[1] for item in selected_by_task.values()]
-    return sorted(records, key=lambda record: task_order[record.task])
+    return sorted(selected_by_task.values(), key=lambda record: task_order[record.task])
 
 
 def _event_backed_run_ids() -> set[str]:
@@ -318,7 +347,7 @@ def pending_tasks(tasks: Sequence[str], records: Sequence[RunRecord]) -> list[st
     return [task for task in tasks if task not in completed]
 
 
-def chunked(items: Sequence[T], size: int) -> Iterator[list[T]]:
+def chunked[T](items: Sequence[T], size: int) -> Iterator[list[T]]:
     if size < 1:
         raise ValueError("chunk size must be at least 1")
     for start in range(0, len(items), size):
