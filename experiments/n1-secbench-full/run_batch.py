@@ -4,17 +4,24 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from math import ceil
-from pathlib import Path
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 from _n1_experiment import (
     CELL_ID,
     REPO_ROOT,
     STUDY_ID,
     ExperimentError,
+    ExperimentStateError,
+    RunRecord,
     Shard,
     chunked,
     experiment_lock,
@@ -22,8 +29,8 @@ from _n1_experiment import (
     load_run_records,
     parse_shard,
     pending_tasks,
-    postgres_exec_argv,
     postgres_connection,
+    postgres_exec_argv,
     require_environment,
     require_program,
     subprocess_environment,
@@ -31,7 +38,142 @@ from _n1_experiment import (
 )
 
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
 logger = logging.getLogger(__name__)
+
+# Scope by aggregate instead of filtering on the secondary event_type index:
+# failure reporting must still work when that index is unhealthy. The CASE keeps
+# prompt/thought payloads out of the subprocess response before Python sees it.
+_FAILURE_DIAGNOSTIC_SQL = """
+WITH RECURSIVE hierarchy(aggregate_id) AS (
+    SELECT 'RUN_ID_PLACEHOLDER'::uuid
+    UNION
+    SELECT created.aggregate_id
+    FROM events AS created
+    JOIN hierarchy AS parent
+      ON created.payload->>'parent_id' = parent.aggregate_id::text
+    WHERE created.event_type = 'AgentCreated'
+)
+SELECT json_build_object(
+    'event_id', event.event_id::text,
+    'aggregate_id', event.aggregate_id::text,
+    'sequence_number', event.sequence_number,
+    'event_type', event.event_type,
+    'occurred_at', event.occurred_at,
+    'payload', CASE
+        WHEN event.event_type = ANY (ARRAY[
+            'AgentCreated',
+            'TaskAssigned',
+            'RunStarted',
+            'RunCompleted',
+            'StatusChanged',
+            'WorkFailed',
+            'VerificationFailed',
+            'DecisionInfeasible',
+            'RetryScheduled',
+            'FailureDigestRecorded',
+            'ChildFailed',
+            'ProcedureExecutionFinished',
+            'PhaseGateRecorded',
+            'LimitEnforced',
+            'AgentExecutionStarted',
+            'AgentExecutionFinished',
+            'OperationStarted',
+            'OperationFinished',
+            'CodeGenerationStarted'
+        ])
+        THEN event.payload
+        ELSE '{}'::jsonb
+    END
+)::text
+FROM events AS event
+JOIN hierarchy USING (aggregate_id)
+ORDER BY event.occurred_at, event.aggregate_id, event.sequence_number;
+"""
+
+_DIAGNOSTIC_FIELDS: dict[str, tuple[str, ...]] = {
+    "AgentCreated": ("role", "parent_id"),
+    "TaskAssigned": ("task_description",),
+    "RunStarted": ("task_description",),
+    "StatusChanged": ("old_status", "new_status", "reason"),
+    "WorkFailed": ("reason",),
+    "VerificationFailed": (
+        "failed_stage",
+        "feedback",
+        "stages_passed",
+        "score",
+    ),
+    "DecisionInfeasible": ("reason", "minimum_subtasks", "minimum_depth"),
+    "RetryScheduled": ("attempt", "reason", "escalated_model"),
+    "FailureDigestRecorded": ("source", "digest"),
+    "ChildFailed": ("child_id", "child_task", "reason", "digest"),
+    "ProcedureExecutionFinished": ("procedure_ref", "success", "summary"),
+    "PhaseGateRecorded": ("phase", "passed", "reason", "evidence_references"),
+    "LimitEnforced": (
+        "limit_type",
+        "limit_value",
+        "attempted_value",
+        "action_taken",
+    ),
+    "AgentExecutionStarted": ("role", "depth"),
+    "AgentExecutionFinished": ("role", "status", "duration_seconds"),
+    "OperationStarted": ("operation_type",),
+    "OperationFinished": ("operation_type", "duration_seconds"),
+    "CodeGenerationStarted": ("tool_name",),
+    "RunCompleted": (
+        "status",
+        "duration_seconds",
+        "total_agents",
+        "completed_agents",
+        "failed_agents",
+    ),
+}
+_CAUSE_EVENT_TYPES = {
+    "WorkFailed",
+    "VerificationFailed",
+    "DecisionInfeasible",
+    "FailureDigestRecorded",
+    "ChildFailed",
+}
+_MANIFEST_DIAGNOSTIC_FIELDS = (
+    "started_at",
+    "ended_at",
+    "summary_available",
+    "models",
+    "tokens",
+    "costs_by_model",
+    "cost_incomplete",
+    "cost_completeness_rate",
+    "deliverables",
+)
+_SECRET_NAME_SUFFIXES = ("_KEY", "_PASSWORD", "_SECRET", "_TOKEN", "_DSN")
+_SECRET_CONNECTION_NAMES = {
+    "DATABASE_URL",
+    "DB_URL",
+    "INVOKEAI_DB_URL",
+    "POSTGRES_URL",
+}
+_BEARER_SECRET = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}")
+_INLINE_SECRET = re.compile(
+    r"(?i)(\b(?:api[_ -]?key|password|secret|token)\b\s*[:=]\s*)"
+    r"[^\s,;\"']{8,}"
+)
+_OPENAI_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")
+
+
+@dataclass(frozen=True)
+class FailureDiagnosticEvent:
+    """One safe-to-render event from a failed run's persisted hierarchy."""
+
+    event_id: str
+    aggregate_id: str
+    sequence_number: int
+    event_type: str
+    occurred_at: str
+    payload: dict[str, object]
 
 
 def _positive_int(value: str) -> int:
@@ -49,9 +191,7 @@ def _shard(value: str) -> Shard:
 
 
 def _instances(value: str) -> tuple[str, ...]:
-    instances = tuple(
-        instance.strip() for instance in value.split(",") if instance.strip()
-    )
+    instances = tuple(instance.strip() for instance in value.split(",") if instance.strip())
     if not instances:
         raise argparse.ArgumentTypeError("must contain at least one instance ID")
     if len(set(instances)) != len(instances):
@@ -181,6 +321,201 @@ def _run_wave(tasks: list[str], parallel: int) -> int:
     )
 
 
+def _parse_failure_diagnostic_events(stdout: str) -> list[FailureDiagnosticEvent]:
+    events: list[FailureDiagnosticEvent] = []
+    for line_number, line in enumerate(stdout.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ExperimentStateError(
+                f"failure diagnostic query returned invalid JSON on line {line_number}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ExperimentStateError(
+                f"failure diagnostic query returned a non-object on line {line_number}"
+            )
+        event_id = raw.get("event_id")
+        aggregate_id = raw.get("aggregate_id")
+        sequence_number = raw.get("sequence_number")
+        event_type = raw.get("event_type")
+        occurred_at = raw.get("occurred_at")
+        payload = raw.get("payload")
+        if (
+            not isinstance(event_id, str)
+            or not isinstance(aggregate_id, str)
+            or not isinstance(sequence_number, int)
+            or isinstance(sequence_number, bool)
+            or not isinstance(event_type, str)
+            or not isinstance(occurred_at, str)
+            or not isinstance(payload, dict)
+        ):
+            raise ExperimentStateError(
+                f"failure diagnostic query returned an invalid event on line {line_number}"
+            )
+        if event_type not in _DIAGNOSTIC_FIELDS:
+            continue
+        events.append(
+            FailureDiagnosticEvent(
+                event_id=event_id,
+                aggregate_id=aggregate_id,
+                sequence_number=sequence_number,
+                event_type=event_type,
+                occurred_at=occurred_at,
+                payload=payload,
+            )
+        )
+    return events
+
+
+def _load_failure_diagnostic_events(record: RunRecord) -> list[FailureDiagnosticEvent]:
+    try:
+        run_id = str(UUID(record.run_id))
+    except ValueError as exc:
+        raise ExperimentStateError(
+            f"cannot diagnose N1 run with invalid UUID {record.run_id!r}"
+        ) from exc
+    _, _, user, database = postgres_connection()
+    query = _FAILURE_DIAGNOSTIC_SQL.replace("RUN_ID_PLACEHOLDER", run_id)
+    result = subprocess.run(  # noqa: S603
+        postgres_exec_argv(
+            "psql",
+            "--username",
+            user,
+            "--dbname",
+            database,
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            query,
+        ),
+        cwd=REPO_ROOT,
+        env=subprocess_environment(),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise ExperimentStateError(
+            f"cannot read failure events for N1 run {record.run_id}: {detail}"
+        )
+    return _parse_failure_diagnostic_events(result.stdout)
+
+
+def _read_failure_manifest(record: RunRecord) -> dict[str, object]:
+    path = record.run_dir / "run_manifest.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExperimentStateError(
+            f"cannot read failure manifest for N1 run {record.run_id}: {exc}"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ExperimentStateError(
+            f"failure manifest for N1 run {record.run_id} is not a JSON object"
+        )
+    return manifest
+
+
+def _redact_diagnostic_text(text: str) -> str:
+    redacted = text
+    for name, value in os.environ.items():
+        if (name.endswith(_SECRET_NAME_SUFFIXES) or name in _SECRET_CONNECTION_NAMES) and len(
+            value
+        ) >= 8:
+            redacted = redacted.replace(value, "<redacted>")
+    redacted = _BEARER_SECRET.sub(r"\1<redacted>", redacted)
+    redacted = _INLINE_SECRET.sub(r"\1<redacted>", redacted)
+    return _OPENAI_SECRET.sub("<redacted>", redacted)
+
+
+def _diagnostic_value(value: object) -> str:
+    return _redact_diagnostic_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def _event_details(event: FailureDiagnosticEvent) -> str:
+    fields = _DIAGNOSTIC_FIELDS.get(event.event_type, ())
+    return " ".join(
+        f"{field}={_diagnostic_value(event.payload[field])}"
+        for field in fields
+        if field in event.payload and event.payload[field] not in (None, "", [], {})
+    )
+
+
+def _is_failure_cause(event: FailureDiagnosticEvent) -> bool:
+    if event.event_type in _CAUSE_EVENT_TYPES:
+        return True
+    if event.event_type == "StatusChanged":
+        return event.payload.get("new_status") in {"failed", "timed_out", "cancelled"}
+    if event.event_type == "ProcedureExecutionFinished":
+        return event.payload.get("success") is False
+    if event.event_type == "PhaseGateRecorded":
+        return event.payload.get("passed") is False
+    return False
+
+
+def _log_failure_diagnostics(record: RunRecord) -> None:
+    manifest_path = record.run_dir / "run_manifest.json"
+    manifest = _read_failure_manifest(record)
+    events = _load_failure_diagnostic_events(record)
+    causes = [event for event in events if _is_failure_cause(event)]
+
+    logger.error(
+        "[failure] begin task=%s run_id=%s exit_status=%s",
+        record.task,
+        record.run_id,
+        record.exit_status,
+    )
+    logger.error("[failure] manifest=%s", manifest_path)
+    logger.error(
+        "[failure] testcase=%s exists=%s",
+        record.run_dir / "testcase",
+        (record.run_dir / "testcase").is_dir(),
+    )
+    logger.error(
+        "[failure] source_snapshot=%s exists=%s",
+        record.run_dir / "src",
+        (record.run_dir / "src").is_dir(),
+    )
+    for field in _MANIFEST_DIAGNOSTIC_FIELDS:
+        if field in manifest:
+            logger.error("[failure] manifest.%s=%s", field, _diagnostic_value(manifest[field]))
+    logger.error(
+        "[failure] diagnostic_events=%d failure_causes=%d",
+        len(events),
+        len(causes),
+    )
+    for index, cause in enumerate(causes, start=1):
+        logger.error(
+            "[failure] cause=%d/%d aggregate_id=%s type=%s %s",
+            index,
+            len(causes),
+            cause.aggregate_id,
+            cause.event_type,
+            _event_details(cause),
+        )
+    for event in events:
+        details = _event_details(event)
+        logger.error(
+            "[failure] event occurred_at=%s aggregate_id=%s sequence=%d event_id=%s type=%s%s",
+            event.occurred_at,
+            event.aggregate_id,
+            event.sequence_number,
+            event.event_id,
+            event.event_type,
+            f" {details}" if details else "",
+        )
+    logger.error("[failure] end task=%s run_id=%s", record.task, record.run_id)
+
+    if not causes:
+        raise ExperimentStateError(
+            "persisted diagnostics for failed N1 run "
+            f"{record.run_id} contain no failure-cause event"
+        )
+
+
 def _evict_wave(
     docker: str,
     tasks: list[str],
@@ -261,25 +596,28 @@ def _execute(args: argparse.Namespace) -> None:
             len(selected_tasks),
         )
 
-    final_records = (
-        load_run_records(definition, event_backed_only=True) if remaining else records
-    )
+    final_records = load_run_records(definition, event_backed_only=True) if remaining else records
     record_by_task = {
         record.task: record for record in final_records if record.task in selected_tasks
     }
     incomplete = [task for task in selected_tasks if task not in record_by_task]
     if incomplete:
         raise ExperimentError("selected run scope is incomplete: " + ", ".join(incomplete))
-    succeeded = sum(
-        record.exit_status == "success" for record in record_by_task.values()
-    )
+    succeeded = sum(record.exit_status == "success" for record in record_by_task.values())
+    failed_records = [
+        record
+        for task, record in record_by_task.items()
+        if task in selected_tasks and record.exit_status != "success"
+    ]
     logger.info(
         "done: shard=%s completed=%d succeeded=%d failed=%d",
         args.shard.label,
         len(selected_tasks),
         succeeded,
-        len(selected_tasks) - succeeded,
+        len(failed_records),
     )
+    for record in failed_records:
+        _log_failure_diagnostics(record)
 
 
 def main(argv: list[str] | None = None) -> int:

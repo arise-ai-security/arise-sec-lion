@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 import pytest
 
@@ -55,6 +56,22 @@ def _record(task: str, run_id: str, run_dir: Path, status: str = "success") -> n
         exit_status=status,
         replicate=0,
         run_dir=run_dir,
+    )
+
+
+def _diagnostic_event(
+    run_id: str,
+    sequence_number: int,
+    event_type: str,
+    **payload: object,
+) -> run_batch.FailureDiagnosticEvent:
+    return run_batch.FailureDiagnosticEvent(
+        event_id=f"00000000-0000-0000-0000-{sequence_number:012d}",
+        aggregate_id=run_id,
+        sequence_number=sequence_number,
+        event_type=event_type,
+        occurred_at=f"2026-07-25T00:00:{sequence_number:02d}+00:00",
+        payload=payload,
     )
 
 
@@ -121,6 +138,71 @@ def test_postgres_clients_run_inside_the_single_database_container(
 
     # Then: the client runs in postgres-main, not from a Homebrew installation.
     assert argv == ["/usr/bin/docker", "exec", "postgres-main", "psql", "--version"]
+
+
+def test_failure_diagnostic_query_is_scoped_to_the_persisted_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: one failed canonical run and a recording PostgreSQL subprocess.
+    run_id = "00000000-0000-0000-0000-000000000104"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    record = _record("task-a", run_id, run_dir, status="failed")
+    prompt_payload = json.dumps(
+        {
+            "event_id": "00000000-0000-0000-0000-000000000106",
+            "aggregate_id": run_id,
+            "sequence_number": 8,
+            "event_type": "PromptSent",
+            "occurred_at": "2026-07-25T00:00:08+00:00",
+            "payload": {},
+        }
+    )
+    failure_payload = json.dumps(
+        {
+            "event_id": "00000000-0000-0000-0000-000000000105",
+            "aggregate_id": run_id,
+            "sequence_number": 9,
+            "event_type": "WorkFailed",
+            "occurred_at": "2026-07-25T00:00:09+00:00",
+            "payload": {"reason": "provider authentication rejected"},
+        }
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=prompt_payload + "\n" + failure_payload + "\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        run_batch,
+        "postgres_exec_argv",
+        lambda program, *args: ["/usr/bin/docker", "exec", program, *args],
+    )
+    monkeypatch.setattr(run_batch.subprocess, "run", fake_run)
+
+    # When: diagnostics are loaded from the authoritative event store.
+    events = run_batch._load_failure_diagnostic_events(record)
+
+    # Then: the SQL is scoped by the validated UUID and the result is typed.
+    assert run_id in calls[0][-1]
+    assert "RUN_ID_PLACEHOLDER" not in calls[0][-1]
+    assert events == [
+        run_batch.FailureDiagnosticEvent(
+            event_id="00000000-0000-0000-0000-000000000105",
+            aggregate_id=run_id,
+            sequence_number=9,
+            event_type="WorkFailed",
+            occurred_at="2026-07-25T00:00:09+00:00",
+            payload={"reason": "provider authentication rejected"},
+        )
+    ]
 
 
 def test_run_defaults_bound_disk_and_enable_concurrency() -> None:
@@ -228,6 +310,176 @@ def test_completed_explicit_scope_does_not_require_provider_runtime(
 
     # When/Then: resume completes without an OpenAI key, Docker, or a new launch.
     run_batch._execute(args)
+
+
+def test_completed_failed_scope_prints_persisted_root_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: a resumed task whose canonical event-backed run already failed.
+    run_id = "00000000-0000-0000-0000-000000000101"
+    run_dir = tmp_path / run_id
+    (run_dir / "testcase").mkdir(parents=True)
+    (run_dir / "src").mkdir()
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "task": "task-a",
+                "exit_status": "failed",
+                "started_at": "2026-07-25T00:00:00Z",
+                "ended_at": "2026-07-25T00:01:00Z",
+                "summary_available": True,
+                "deliverables": {"security_report.md": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = _record("task-a", run_id, run_dir, status="failed")
+    definition = _definition(("task-a",))
+    secret = "sk-this-must-not-appear"  # noqa: S105 - fake redaction sentinel
+    reason = (
+        "OpenHands adapter failed after validating the runtime boundary; "
+        f"Authorization: Bearer {secret}"
+    )
+    events = [
+        _diagnostic_event(run_id, 1, "AgentCreated", role="boss"),
+        _diagnostic_event(run_id, 2, "OperationStarted", operation_type="worker_execution"),
+        _diagnostic_event(run_id, 3, "WorkFailed", reason=reason),
+        _diagnostic_event(
+            run_id,
+            4,
+            "RunCompleted",
+            status="failed",
+            duration_seconds=60.0,
+            total_agents=1,
+            completed_agents=0,
+            failed_agents=1,
+        ),
+    ]
+    monkeypatch.setattr(run_batch, "load_definition", lambda: definition)
+    monkeypatch.setattr(run_batch, "load_run_records", lambda *_args, **_kwargs: [record])
+    monkeypatch.setattr(run_batch, "_load_failure_diagnostic_events", lambda _record: events)
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    monkeypatch.setattr(
+        run_batch,
+        "_require_runtime",
+        lambda: pytest.fail("completed resume must not require provider runtime"),
+    )
+    args = run_batch._parser().parse_args(["--instances", "task-a"])
+
+    # When: the failed task is selected again without rerunning it.
+    with caplog.at_level(logging.INFO):
+        run_batch._execute(args)
+
+    # Then: the current output resolves the old run and its complete persisted cause.
+    output = caplog.text
+    assert "completed=1 pending=0" in output
+    assert "done: shard=1/1 completed=1 succeeded=0 failed=1" in output
+    assert f"[failure] begin task=task-a run_id={run_id} exit_status=failed" in output
+    assert f"[failure] manifest={run_dir / 'run_manifest.json'}" in output
+    assert "[failure] diagnostic_events=4 failure_causes=1" in output
+    assert f"[failure] cause=1/1 aggregate_id={run_id} type=WorkFailed" in output
+    assert "OpenHands adapter failed after validating the runtime boundary" in output
+    assert "type=RunCompleted" in output
+    assert secret not in output
+    assert "Bearer <redacted>" in output
+
+
+def test_new_failed_run_prints_the_same_persisted_root_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: one pending task that produces a failed event-backed record.
+    run_id = "00000000-0000-0000-0000-000000000102"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps({"run_id": run_id, "task": "task-a", "exit_status": "failed"}),
+        encoding="utf-8",
+    )
+    record = _record("task-a", run_id, run_dir, status="failed")
+    definition = _definition(("task-a",))
+    records_calls = 0
+
+    def fake_records(*_args: object, **_kwargs: object) -> list[n1.RunRecord]:
+        nonlocal records_calls
+        records_calls += 1
+        return [] if records_calls == 1 else [record]
+
+    diagnostic_calls: list[str] = []
+
+    def fake_diagnostics(selected: n1.RunRecord) -> list[run_batch.FailureDiagnosticEvent]:
+        diagnostic_calls.append(selected.run_id)
+        return [
+            _diagnostic_event(
+                run_id,
+                1,
+                "VerificationFailed",
+                failed_stage="execution",
+                feedback="patched binary still reproduces the sanitizer failure",
+                stages_passed=["structural"],
+                score=0,
+            ),
+            _diagnostic_event(
+                run_id,
+                2,
+                "RunCompleted",
+                status="failed",
+                failed_agents=1,
+            ),
+        ]
+
+    monkeypatch.setattr(run_batch, "load_definition", lambda: definition)
+    monkeypatch.setattr(run_batch, "load_run_records", fake_records)
+    monkeypatch.setattr(run_batch, "_require_runtime", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(run_batch, "_provision_wave", lambda *_args: None)
+    monkeypatch.setattr(run_batch, "_run_wave", lambda *_args: 1)
+    monkeypatch.setattr(run_batch, "_evict_wave", lambda *_args: None)
+    monkeypatch.setattr(run_batch, "_load_failure_diagnostic_events", fake_diagnostics)
+    args = run_batch._parser().parse_args(["--instances", "task-a"])
+
+    # When: the batch executes and records the failed outcome.
+    with caplog.at_level(logging.INFO):
+        run_batch._execute(args)
+
+    # Then: the newly produced failure is diagnosed from persisted state too.
+    output = caplog.text
+    assert "recorded one or more failed experimental outcomes" in output
+    assert "done: shard=1/1 completed=1 succeeded=0 failed=1" in output
+    assert "type=VerificationFailed" in output
+    assert 'failed_stage="execution"' in output
+    assert "patched binary still reproduces the sanitizer failure" in output
+    assert diagnostic_calls == [run_id]
+
+
+def test_failed_scope_rejects_missing_persisted_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a failed manifest whose event history has only a terminal status.
+    run_id = "00000000-0000-0000-0000-000000000103"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps({"run_id": run_id, "task": "task-a", "exit_status": "failed"}),
+        encoding="utf-8",
+    )
+    record = _record("task-a", run_id, run_dir, status="failed")
+    monkeypatch.setattr(run_batch, "load_definition", lambda: _definition(("task-a",)))
+    monkeypatch.setattr(run_batch, "load_run_records", lambda *_args, **_kwargs: [record])
+    monkeypatch.setattr(
+        run_batch,
+        "_load_failure_diagnostic_events",
+        lambda _record: [_diagnostic_event(run_id, 1, "RunCompleted", status="failed")],
+    )
+    args = run_batch._parser().parse_args(["--instances", "task-a"])
+
+    # When + Then: the command refuses to present an undiagnosable failed count as done.
+    with pytest.raises(n1.ExperimentStateError, match="no failure-cause event"):
+        run_batch._execute(args)
 
 
 def test_duplicate_task_manifests_select_earliest_launch(tmp_path: Path) -> None:
@@ -477,6 +729,117 @@ def test_run_loads_openai_key_only_from_study_environment(
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(runner.RunError, match="only N1 host settings"):
         runner._load_environment()
+
+
+def test_run_streams_child_output_to_an_independent_host_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a child command that writes to both stdout and stderr.
+    runner = _load_script_module("n1_handoff_run_stream", N1_DIR / "run.py")
+    log_path = tmp_path / "run.log"
+    monkeypatch.setattr(runner, "ROOT_DIR", tmp_path)
+
+    # When: the host wrapper supervises the child.
+    with log_path.open("xb", buffering=0) as log_stream:
+        runner._stream_process(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('child stdout'); print('child stderr', file=sys.stderr)",
+            ],
+            log_stream=log_stream,
+        )
+
+    # Then: combined child diagnostics remain live on the terminal and are persisted.
+    terminal = capfd.readouterr().out
+    saved = log_path.read_text(encoding="utf-8")
+    assert "child stdout" in terminal
+    assert "child stderr" in terminal
+    assert "child stdout" in saved
+    assert "child stderr" in saved
+    assert all(line.startswith("20") for line in saved.splitlines())
+
+
+def test_run_preserves_child_diagnostics_before_nonzero_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a child that emits its failure reason before returning nonzero.
+    runner = _load_script_module("n1_handoff_run_failure", N1_DIR / "run.py")
+    log_path = tmp_path / "failed-run.log"
+    monkeypatch.setattr(runner, "ROOT_DIR", tmp_path)
+
+    # When: the host wrapper observes the failed process.
+    with (
+        log_path.open("xb", buffering=0) as log_stream,
+        pytest.raises(subprocess.CalledProcessError) as failure,
+    ):
+        runner._stream_process(
+            [
+                sys.executable,
+                "-c",
+                "print('intentional child failure'); raise SystemExit(23)",
+            ],
+            log_stream=log_stream,
+        )
+
+    # Then: the exit status and preceding diagnostics are both retained.
+    assert failure.value.returncode == 23
+    assert "intentional child failure" in capfd.readouterr().out
+    assert "intentional child failure" in log_path.read_text(encoding="utf-8")
+
+
+def test_run_creates_one_automatic_log_around_prepare_and_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a colleague-facing smoke invocation with isolated child commands.
+    runner = _load_script_module("n1_handoff_run_log", N1_DIR / "run.py")
+    log_dir = tmp_path / "_run_logs"
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(runner, "LOG_DIR", log_dir)
+    monkeypatch.setattr(runner, "_load_environment", lambda: None)
+    monkeypatch.setattr(runner, "_load_openai_key", lambda: None)
+
+    def fake_run(
+        script: str,
+        arguments: list[str] | None = None,
+        *,
+        log_stream: BinaryIO,
+    ) -> None:
+        calls.append((script, list(arguments or [])))
+        log_stream.write(f"child: {script}\n".encode())
+
+    monkeypatch.setattr(runner, "_run", fake_run)
+
+    # When: the wrapper prepares and launches the smoke scope.
+    result = runner.main(["--smoke", "--parallel", "1"])
+
+    # Then: one ignored host log contains wrapper and child output without touching events.
+    logs = list(log_dir.glob("run-*.log"))
+    assert result == 0
+    assert len(logs) == 1
+    assert logs[0].stat().st_mode & 0o777 == 0o600
+    saved = logs[0].read_text(encoding="utf-8")
+    assert "run log:" in saved
+    assert "run arguments: --parallel 1 --instances gpac.cve-2024-0322" in saved
+    assert "starting prepare_n1_experiment.py" in saved
+    assert "child: prepare_n1_experiment.py" in saved
+    assert "finished prepare_n1_experiment.py" in saved
+    assert "starting run_batch.py" in saved
+    assert "child: run_batch.py" in saved
+    assert "finished run_batch.py" in saved
+    assert "run complete:" in saved
+    assert calls == [
+        ("prepare_n1_experiment.py", []),
+        (
+            "run_batch.py",
+            ["--parallel", "1", "--instances", "gpac.cve-2024-0322"],
+        ),
+    ]
 
 
 def test_handoff_readme_exposes_setup_model_run_and_export() -> None:
