@@ -56,7 +56,22 @@ normal model usage and cost. The command verifies that exactly one new
 event-backed run was created per task and reports that attempt; ordinary
 resume/export commands continue to use the original first launch as canonical.
 
-## 4. Export
+## 4. Status
+
+```bash
+uv run python experiments/n1-secbench-full/status.py
+uv run python experiments/n1-secbench-full/status.py --all   # full pending list
+```
+
+Prints done/pending counts, per-instance `exit_status` + `run_id`, key paths
+(logs under `_run_logs/n1-secbench-full/`, manifests under `runs/<run_id>/`),
+and the resume/export commands. Prefers event-backed records when Postgres is
+up; otherwise falls back to filesystem manifests.
+
+Re-run `run.py` to finish pending tasks only. Terminal failures stay done until
+`--force --instances ...`. Kill mid-task → no terminal manifest → stays pending.
+
+## 5. Export
 
 After the run finishes:
 
